@@ -15,7 +15,7 @@ num_eigenvalues: 5      # eigenvalues
 use_charge: False
 num_degree: 10
 dist_feat: True
-positional_encoding: True
+positional_encoding: False  # True for ablations, to keep the equivariance, it should be False!
 
 # sign net
 sign_net: False
