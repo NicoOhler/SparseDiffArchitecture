@@ -1,6 +1,0 @@
-name: 'protein'
-datadir: 'data/protein/'
-random_subset: null
-pin_memory: False
-molecules: False
-spectre: False

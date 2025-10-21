@@ -9,6 +9,7 @@ try:
 except ModuleNotFoundError:
     print("Graph tool not found.")
 import torch
+torch.set_float32_matmul_precision('medium')
 import hydra
 from omegaconf import DictConfig
 import pytorch_lightning as pl
@@ -17,7 +18,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 import utils
 from metrics.abstract_metrics import TrainAbstractMetricsDiscrete
 from diffusion_model_sparse import DiscreteDenoisingDiffusion
-from metrics.molecular_metrics import TrainMolecularMetricsDiscrete
+# from metrics.molecular_metrics import TrainMolecularMetricsDiscrete
 from diffusion.extra_features import DummyExtraFeatures, ExtraFeatures
 from diffusion.extra_features_molecular import ExtraMolecularFeatures
 from sparse_diffusion.metrics.sampling_metrics import SamplingMetrics

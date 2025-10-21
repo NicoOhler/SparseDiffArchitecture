@@ -2,6 +2,8 @@
 sparse_diffusion/analysis/orca/tmp*
 sparse_diffusion/analysis/orca/orca
 
+.vscode/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

@@ -260,7 +260,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
 
     def on_train_epoch_end(self) -> None:
         epoch_loss = self.train_loss.log_epoch_metrics()
-        # self.log("train_epoch/x_CE", epoch_loss["train_epoch/x_CE"], sync_dist=False)
+        # self.log("train_epoch/x_CE", epoch_loss["train_epoch/x_CE"], sync_dist=True)
         self.print(
             f"Epoch {self.current_epoch} finished: X: {epoch_loss['train_epoch/x_CE'] :.2f} -- "
             f"E: {epoch_loss['train_epoch/E_CE'] :.2f} --"
@@ -490,7 +490,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
 
         # Log val nll with default Lightning logger, so it can be monitored by checkpoint callback
         val_nll = metrics[0]
-        self.log("val/epoch_NLL", val_nll, sync_dist=False)
+        self.log("val/epoch_NLL", val_nll, sync_dist=True)
 
         if val_nll < self.best_val_nll:
             self.best_val_nll = val_nll

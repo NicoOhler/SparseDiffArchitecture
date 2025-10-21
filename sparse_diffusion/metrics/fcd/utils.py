@@ -5,7 +5,7 @@ from typing import List
 
 import numpy as np
 import torch
-from rdkit import Chem
+# from rdkit import Chem
 from scipy import linalg
 from torch import nn
 from torch.utils.data import Dataset
