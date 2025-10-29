@@ -10,7 +10,7 @@ RECTANGLE_MAX_HEIGHT = 2
 LINE_MIN_LENGTH = 3
 LINE_MAX_LENGTH = 5
 TRIANGLE_MAX_BASE = 6
-MAX_SHAPES_PER_GRAPH = 40
+MAX_SHAPES_PER_GRAPH = 30
 
 class CustomDatasetGenerator:
     def __call__(self, root):
@@ -28,8 +28,9 @@ class CustomDatasetGenerator:
                 # generate random shapes
                 shapes = []
                 num_shapes = random.randint(1, MAX_SHAPES_PER_GRAPH)
+                shape_type = self._get_random_shape_type()
                 for _ in range(num_shapes):
-                    shapes.extend(self._generate_shape())
+                    shapes.extend(self._generate_shape(shape_type=shape_type))
 
                 # write edges without duplicates to csv
                 seen_edges = set()
@@ -39,9 +40,12 @@ class CustomDatasetGenerator:
                         writer.writerow(edge)
                         seen_edges.add(edge_key)       
 
+    def _get_random_shape_type(self, choices=['rectangle', 'triangle', 'line']):
+        return random.choice(choices)
 
-    def _generate_shape(self):
-        shape_type = random.choice(['rectangle', 'triangle', 'line'])
+    def _generate_shape(self, shape_type=None):
+        if shape_type is None:
+            shape_type = self._get_random_shape_type()
         if shape_type == 'rectangle':
             return self._generate_rectangle()
         elif shape_type == 'triangle':

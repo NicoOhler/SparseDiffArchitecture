@@ -105,6 +105,7 @@ class Visualizer:
                     Draw.MolToFile(mol, file_path)
                 except rdkit.Chem.KekulizeException:
                     print("Can't kekulize molecule")
+   
             else:
                 graph = self.to_networkx(
                     node=graphs.node[node_mask].long().cpu().numpy(),
@@ -114,7 +115,21 @@ class Visualizer:
                     edge_attr=graphs.edge_attr[edge_mask].long().cpu().numpy(),
                 )
 
-                self.visualize_non_molecule(graph=graph, pos=None, path=file_path)
+                pos = None
+                if self.dataset_infos.dataset_name == "custom":
+                    # place the nodes according to their node features
+                    # node feature = composite of x, y coordinates
+                    # idx = x * grid_size + y with grid_size = sqrt(num_nodes)
+                    num_nodes = len(graph.nodes)
+                    grid_size = int(np.ceil(np.sqrt(num_nodes)))
+                    pos = {}
+                    for j, node_type in enumerate(graph.nodes(data=True)):
+                        composite_coord = node_type[1]["symbol"].item()
+                        x = composite_coord // grid_size
+                        y = composite_coord % grid_size
+                        pos[j] = (x, y)
+
+                self.visualize_non_molecule(graph=graph, pos=pos, path=file_path)
 
             if wandb.run is not None and log is not None:
                 if i < 3:
@@ -194,7 +209,20 @@ class Visualizer:
 
                 # find the coordinates of atoms in the final molecule
                 final_graph = graphs[-1]
-                final_pos = nx.spring_layout(final_graph, seed=0)
+                if self.dataset_infos.dataset_name == "custom":
+                    # place the nodes according to their node features
+                    # node feature = composite of x, y coordinates
+                    # idx = x * grid_size + y with grid_size = sqrt(num_nodes)
+                    num_nodes = len(final_graph.nodes)
+                    grid_size = int(np.ceil(np.sqrt(num_nodes)))
+                    final_pos = {}
+                    for j, node_type in enumerate(final_graph.nodes(data=True)):
+                        composite_coord = node_type[1]["symbol"].item()
+                        x = composite_coord // grid_size
+                        y = composite_coord % grid_size
+                        final_pos[j] = (x, y)
+                else:
+                    final_pos = nx.spring_layout(final_graph, seed=0)
 
                 save_paths = []
                 num_frames = len(node_list)
