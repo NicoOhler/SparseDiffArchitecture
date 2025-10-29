@@ -2,7 +2,7 @@ import os.path as osp
 import pickle
 from typing import Any, Sequence
 
-# from rdkit import Chem
+from rdkit import Chem
 import torch
 from torch_geometric.data import Data
 from torch_geometric.utils import subgraph

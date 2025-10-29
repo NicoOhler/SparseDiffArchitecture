@@ -1,14 +1,13 @@
 import os
 import pathlib
 import os.path as osp
-
 import numpy as np
-from tqdm import tqdm
-import random
-import networkx as nx
+import csv
 import torch
-import pickle as pkl
+import math
+
 import torch_geometric.utils
+import torch.nn.functional as F
 from torch_geometric.data import InMemoryDataset, download_url
 from hydra.utils import get_original_cwd
 from networkx import to_numpy_array
@@ -23,18 +22,16 @@ from sparse_diffusion.datasets.dataset_utils import (
     save_pickle,
     Statistics,
     to_list,
-    RemoveYTransform,
 )
 from sparse_diffusion.metrics.metrics_utils import (
     node_counts,
     atom_type_counts,
     edge_counts,
 )
-import csv
 
-STORE_AS_CSV = False
+import sparse_diffusion.datasets.custom_dataset_generator as dataset_generator
 
-class SpectreGraphDataset(InMemoryDataset):
+class CustomDataset(InMemoryDataset):
     def __init__(
         self,
         dataset_name,
@@ -44,9 +41,6 @@ class SpectreGraphDataset(InMemoryDataset):
         pre_transform=None,
         pre_filter=None,
     ):
-        self.sbm_file = "sbm_200.pt"
-        self.planar_file = "planar_64_200.pt"
-        self.comm20_file = "community_12_21_100.pt"
         self.dataset_name = dataset_name
 
         self.split = split
@@ -57,6 +51,8 @@ class SpectreGraphDataset(InMemoryDataset):
         else:
             self.file_idx = 2
 
+        dataset_generator.CustomDatasetGenerator()(root)
+        self.grid_size = dataset_generator.GRID_SIZE
         super().__init__(root, transform, pre_transform, pre_filter)
         self.data, self.slices = torch.load(self.processed_paths[0])
 
@@ -66,9 +62,10 @@ class SpectreGraphDataset(InMemoryDataset):
             bond_types=torch.from_numpy(np.load(self.processed_paths[3])).float(),
         )
 
+
     @property
     def raw_file_names(self):
-        return ["train.pt", "val.pt", "test.pt", 'ego.pkl', 'ego_ns.pkl']
+        return ["train.pt", "val.pt", "test.pt"]
         # return ["train.pkl", "val.pkl", "test.pkl"]
 
     @property
@@ -107,58 +104,44 @@ class SpectreGraphDataset(InMemoryDataset):
             ]
 
     def download(self):
-        """
-        Download raw qm9 files. Taken from PyG QM9 class
-        """
-        if self.dataset_name == "sbm":
-            raw_url = "https://raw.githubusercontent.com/KarolisMart/SPECTRE/main/data/sbm_200.pt"
-        elif self.dataset_name == "planar":
-            raw_url = "https://raw.githubusercontent.com/KarolisMart/SPECTRE/main/data/planar_64_200.pt"
-        elif self.dataset_name == "comm20":
-            raw_url = "https://raw.githubusercontent.com/KarolisMart/SPECTRE/main/data/community_12_21_100.pt"
-        elif self.dataset_name == "ego":        
-            raw_url = "https://raw.githubusercontent.com/tufts-ml/graph-generation-EDGE/main/graphs/Ego.pkl"
-        else:
-            raise ValueError(f"Unknown dataset {self.dataset_name}")
-        file_path = download_url(raw_url, self.raw_dir)
+        graphs_folder = osp.join(self.root, "graphs")
+        if not osp.exists(graphs_folder):
+            print(f"{graphs_folder} does not exist. Please store the graph files there.")
+            raise FileNotFoundError
 
-        if self.dataset_name == 'ego':
-            networks = pkl.load(open(file_path, 'rb'))
-            adjs = [torch.Tensor(to_numpy_array(network)).fill_diagonal_(0) for network in networks]
-        else:
-            (
-                adjs,
-                eigvals,
-                eigvecs,
-                n_nodes,
-                max_eigval,
-                min_eigval,
-                same_sample,
-                n_max,
-            ) = torch.load(file_path)
+        graph_files = [f for f in os.listdir(graphs_folder) if f.endswith('.csv')]
+        if not graph_files:
+            raise FileNotFoundError(f"No graph files found in {graphs_folder}")
+        
+        adjs = []
+        for file in graph_files:
+            with open(osp.join(graphs_folder, file), 'r') as f:
+                reader = csv.reader(f)
+                reader.__next__()
+                n = self.grid_size * self.grid_size
+                adj = np.zeros((n, n))
+                for row in reader:
+                    # todo handle extra attributes
+                    x1, y1, x2, y2, weight = int(row[0]), int(row[1]), int(row[2]), int(row[3]), float(row[4])
+                    idx1 = self._get_index(x1, y1)
+                    idx2 = self._get_index(x2, y2)
+                    weight = self._discretize_weight(weight)
+                    adj[idx1, idx2], adj[idx2, idx1] = weight, weight
+                adjs.append(torch.from_numpy(adj))
+      
             
         g_cpu = torch.Generator()
         g_cpu.manual_seed(1234)
         self.num_graphs = len(adjs)
 
-        if self.dataset_name == 'ego':
-            test_len = int(round(self.num_graphs * 0.2))
-            train_len = int(round(self.num_graphs * 0.8))
-            val_len = int(round(self.num_graphs * 0.2))
-            indices = torch.randperm(self.num_graphs, generator=g_cpu)
-            print(f"Dataset sizes: train {train_len}, val {val_len}, test {test_len}")
-            train_indices = indices[:train_len]
-            val_indices = indices[:val_len]
-            test_indices = indices[train_len:]
-        else:
-            test_len = int(round(self.num_graphs * 0.2))
-            train_len = int(round((self.num_graphs - test_len) * 0.8))
-            val_len = self.num_graphs - train_len - test_len
-            indices = torch.randperm(self.num_graphs, generator=g_cpu)
-            print(f"Dataset sizes: train {train_len}, val {val_len}, test {test_len}")
-            train_indices = indices[:train_len]
-            val_indices = indices[train_len : train_len + val_len]
-            test_indices = indices[train_len + val_len :]
+        test_len = int(round(self.num_graphs * 0.2))
+        train_len = int(round((self.num_graphs - test_len) * 0.8))
+        val_len = self.num_graphs - train_len - test_len
+        indices = torch.randperm(self.num_graphs, generator=g_cpu)
+        print(f"Dataset sizes: train {train_len}, val {val_len}, test {test_len}")
+        train_indices = indices[:train_len]
+        val_indices = indices[train_len : train_len + val_len]
+        test_indices = indices[train_len + val_len :]
 
         print(f"Train indices: {train_indices}")
         print(f"Val indices: {val_indices}")
@@ -166,38 +149,18 @@ class SpectreGraphDataset(InMemoryDataset):
         train_data = []
         val_data = []
         test_data = []
-        train_data_nx = []
-        val_data_nx = []
-        test_data_nx = []
 
         for i, adj in enumerate(adjs):
-            # permute randomly nodes as for molecular datasets
-            random_order = torch.randperm(adj.shape[-1])
-            adj = adj[random_order, :]
-            adj = adj[:, random_order]
-            net = nx.from_numpy_matrix(adj.numpy()).to_undirected()
-
             if i in train_indices:
                 train_data.append(adj)
-                train_data_nx.append(net)
             if i in val_indices:
                 val_data.append(adj)
-                val_data_nx.append(net)
             if i in test_indices:
                 test_data.append(adj)
-                test_data_nx.append(net)
 
         torch.save(train_data, self.raw_paths[0])
         torch.save(val_data, self.raw_paths[1])
         torch.save(test_data, self.raw_paths[2])
-
-        # import pdb; pdb.set_trace()
-        all_data = {'train': train_data_nx, 'val': val_data_nx, 'test': test_data_nx}
-        import pickle
-        with open(self.raw_paths[3], 'wb') as handle:
-            pickle.dump(all_data, handle, protocol=pickle.HIGHEST_PROTOCOL)
-        with open(self.raw_paths[4], 'wb') as handle:
-            pickle.dump(train_data_nx+val_data_nx+test_data_nx, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 
     def process(self):
@@ -205,27 +168,22 @@ class SpectreGraphDataset(InMemoryDataset):
         data_list = []
         for adj in raw_dataset:
             n = adj.shape[-1]
-            X = torch.ones(n, 1, dtype=torch.long)
-            edge_index, _ = torch_geometric.utils.dense_to_sparse(adj)
-            edge_attr = torch.zeros(edge_index.shape[-1], 2, dtype=torch.float)
-            edge_attr[:, 1] = 1
+
+            # represent x, y coordinates as single composite node feature
+            X = torch.arange(n, dtype=torch.long).unsqueeze(-1)
+            
+            # permutate nodes for permutation invariance
+            random_order = torch.randperm(adj.shape[-1])
+            adj = adj[random_order, :]
+            adj = adj[:, random_order]
+            X = X[random_order, :].squeeze()
+
+            # include weights as edge attributes
+            edge_index, edge_attr = torch_geometric.utils.dense_to_sparse(adj)
             n_nodes = n * torch.ones(1, dtype=torch.long)
             data = torch_geometric.data.Data(
-                x=X.float(), edge_index=edge_index, edge_attr=edge_attr.float(), n_nodes=n_nodes
+                x=X.long(), edge_index=edge_index, edge_attr=edge_attr.long(), n_nodes=n_nodes
             )
-
-            if STORE_AS_CSV:
-                # store each graph in csv file: x1, y1, x2, y2, weight
-                os.makedirs(os.path.join(self.root, "graphs"), exist_ok=True)
-                with open(os.path.join(self.root, f"graphs/graph_{len(data_list)}.csv"), "w") as f:
-                    writer = csv.writer(f)
-                    writer.writerow(["x1", "y1", "x2", "y2", "weight"])
-                    grid_size = np.ceil(np.sqrt(n)).astype(int)
-                    for edge in edge_index.t().tolist():
-                        x1, y1 = edge[0] % grid_size, edge[0] // grid_size
-                        x2, y2 = edge[1] % grid_size, edge[1] // grid_size
-                        weight = random.uniform(0.0, 2.9)  # assign random weight between 0 and 3
-                        writer.writerow([x1, y1, x2, y2, weight])
 
             if self.pre_filter is not None and not self.pre_filter(data):
                 continue
@@ -234,40 +192,47 @@ class SpectreGraphDataset(InMemoryDataset):
 
             data_list.append(data)
 
-        num_nodes = node_counts(data_list)
-        node_types = atom_type_counts(data_list, num_classes=1)
-        bond_types = edge_counts(data_list, num_bond_types=2)
+        num_nodes = node_counts(data_list) 
+        node_type_distribution = atom_type_counts(data_list, num_classes=n) # single class to represent x/y coordinates
+        edge_type_distribution = edge_counts(data_list, num_bond_types=4) # weights: 0, 1, 2, 3 (0 means no edge)
+
         torch.save(self.collate(data_list), self.processed_paths[0])
         save_pickle(num_nodes, self.processed_paths[1])
-        np.save(self.processed_paths[2], node_types)
-        np.save(self.processed_paths[3], bond_types)
+        np.save(self.processed_paths[2], node_type_distribution)
+        np.save(self.processed_paths[3], edge_type_distribution)
 
 
-class SpectreGraphDataModule(AbstractDataModule):
+    def _get_index(self, x, y):
+        assert x >= 0 and x < self.grid_size, "x coordinate out of bounds [0, 7]: {}".format(x)
+        assert y >= 0 and y < self.grid_size, "y coordinate out of bounds [0, 7]: {}".format(y)
+        return x * self.grid_size + y
+
+    def _discretize_weight(self, weight):
+        assert weight >= 0 and weight <= 3.0, "Weight out of bounds [0, 3]: {}".format(weight)
+        weight = int(math.ceil(weight))
+        return weight if weight > 0 else 1
+
+class CustomDataModule(AbstractDataModule):
     def __init__(self, cfg):
         self.cfg = cfg
         self.dataset_name = self.cfg.dataset.name
         self.datadir = cfg.dataset.datadir
         base_path = pathlib.Path(get_original_cwd()).parents[0]
         root_path = os.path.join(base_path, self.datadir)
-        pre_transform = RemoveYTransform()
 
         datasets = {
-            "train": SpectreGraphDataset(
+            "train": CustomDataset(
                 dataset_name=self.cfg.dataset.name,
-                pre_transform=pre_transform,
                 split="train",
                 root=root_path,
             ),
-            "val": SpectreGraphDataset(
+            "val": CustomDataset(
                 dataset_name=self.cfg.dataset.name,
-                pre_transform=pre_transform,
                 split="val",
                 root=root_path,
             ),
-            "test": SpectreGraphDataset(
+            "test": CustomDataset(
                 dataset_name=self.cfg.dataset.name,
-                pre_transform=pre_transform,
                 split="test",
                 root=root_path,
             ),
@@ -284,7 +249,7 @@ class SpectreGraphDataModule(AbstractDataModule):
         self.inner = self.train_dataset
 
 
-class SpectreDatasetInfos(AbstractDatasetInfos):
+class CustomDatasetInfos(AbstractDatasetInfos):
     def __init__(self, datamodule):
         self.is_molecular = False
         self.spectre = True
@@ -308,32 +273,11 @@ class SpectreDatasetInfos(AbstractDatasetInfos):
         }
 
     def to_one_hot(self, data):
-        """
-        call in the beginning of data
-        get the one_hot encoding for a charge beginning from -1
-        """
+        data.x = F.one_hot(data.x, num_classes=self.num_node_types).float()
         data.charge = data.x.new_zeros((*data.x.shape[:-1], 0))
         if data.y is None:
             data.y = data.x.new_zeros((data.batch.max().item()+1, 0))
+        data.edge_attr = F.one_hot(data.edge_attr, num_classes=self.num_edge_types).float()
 
         return data
 
-
-class Comm20DataModule(SpectreGraphDataModule):
-    def __init__(self, cfg):
-        super().__init__(cfg)
-
-
-class SBMDataModule(SpectreGraphDataModule):
-    def __init__(self, cfg):
-        super().__init__(cfg)
-
-
-class PlanarDataModule(SpectreGraphDataModule):
-    def __init__(self, cfg):
-        super().__init__(cfg)
-
-
-class EgoDataModule(SpectreGraphDataModule):
-    def __init__(self, cfg):
-        super().__init__(cfg)

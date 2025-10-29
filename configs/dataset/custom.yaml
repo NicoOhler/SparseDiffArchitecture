@@ -1,0 +1,6 @@
+name: 'custom'
+datadir: 'data/custom/'
+random_subset: null
+pin_memory: False
+molecules: False
+spectre: False

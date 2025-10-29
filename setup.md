@@ -1,3 +1,4 @@
+# Setup
 ### Anaconda Setup
 + sudo apt upgrade
 + bash Anaconda3-2025.06-1-Linux-x86_64.sh
@@ -16,12 +17,17 @@
 + pip install -e .
 + g++ -O2 -std=c++11 -o sparse_diffusion/analysis/orca/orca sparse_diffusion/analysis/orca/orca.cpp
 
-### Fixes
+### Optional Fixes
 + pip install --force-reinstall "torch==2.2.2+cu118" "torchdata==0.7.1" --extra-index-url https://download.pytorch.org/whl/cu118
 + pip uninstall -y dgl
 + pip install dgl==1.1.2
 + pip install yacs
 + pip install torch-scatter -f https://data.pyg.org/whl/torch-$(python -c "import torch; print(torch.__version__)").html
++ pip uninstall networkx
++ pip install "networkx<3.0"
++ pip install fcd
++ pip install fcd-torch
+
 
 ### Run with:
 + conda activate sparse

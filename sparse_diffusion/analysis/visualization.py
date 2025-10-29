@@ -1,16 +1,16 @@
 import os
 
-# from rdkit import Chem
-# from rdkit.Chem import Draw, AllChem
-# from rdkit.Geometry import Point3D
-# from rdkit import RDLogger
-# import rdkit.Chem
+from rdkit import Chem
+from rdkit.Chem import Draw, AllChem
+from rdkit.Geometry import Point3D
+from rdkit import RDLogger
+import rdkit.Chem
 import imageio
 import networkx as nx
 import numpy as np
 import wandb
 import matplotlib.pyplot as plt
-# from sparse_diffusion.metrics.molecular_metrics import Molecule, SparseMolecule
+from sparse_diffusion.metrics.molecular_metrics import SparseMolecule
 
 
 class Visualizer:

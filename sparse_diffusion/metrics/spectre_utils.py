@@ -1120,6 +1120,15 @@ class EgoSamplingMetrics(SpectreSamplingMetrics):
             metrics_list=["degree", "clustering", "orbit", "spectre", "neural"],
         )
 
+class CustomSamplingMetrics(SpectreSamplingMetrics):
+    def __init__(self, dataloaders, test):
+        super().__init__(
+            dataloaders=dataloaders,
+            compute_emd=False,
+            test=test,
+            metrics_list=["degree", "clustering", "orbit", "spectre"],
+        )
+
 
 def degree_histogram(generated_graphs, target, compute_emd=False):
     """Compute the distance between the degree distributions of two unordered sets of graphs.

@@ -50,7 +50,8 @@ class SamplingMetrics(nn.Module):
                 SBMSamplingMetrics,
                 ProteinSamplingMetrics,
                 PointCloudSamplingMetrics,
-                EgoSamplingMetrics
+                EgoSamplingMetrics,
+                CustomSamplingMetrics
             )
 
             if dataset_infos.dataset_name == "comm20":
@@ -65,6 +66,8 @@ class SamplingMetrics(nn.Module):
                 self.domain_metrics = PointCloudSamplingMetrics(dataloaders=dataloaders, test=test)
             elif dataset_infos.dataset_name == "ego":
                 self.domain_metrics = EgoSamplingMetrics(dataloaders=dataloaders, test=test)
+            elif dataset_infos.dataset_name == "custom":
+                self.domain_metrics = CustomSamplingMetrics(dataloaders=dataloaders, test=test)
             else:
                 raise ValueError(
                     "Dataset {} not implemented".format(dataset_infos.dataset_name)

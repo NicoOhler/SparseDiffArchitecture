@@ -18,7 +18,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 import utils
 from metrics.abstract_metrics import TrainAbstractMetricsDiscrete
 from diffusion_model_sparse import DiscreteDenoisingDiffusion
-# from metrics.molecular_metrics import TrainMolecularMetricsDiscrete
+from metrics.molecular_metrics import TrainMolecularMetricsDiscrete
 from diffusion.extra_features import DummyExtraFeatures, ExtraFeatures
 from diffusion.extra_features_molecular import ExtraMolecularFeatures
 from sparse_diffusion.metrics.sampling_metrics import SamplingMetrics
@@ -65,6 +65,15 @@ def main(cfg: DictConfig):
 
         datamodule = protein_dataset.ProteinDataModule(cfg)
         dataset_infos = protein_dataset.ProteinInfos(datamodule=datamodule)
+        train_metrics = TrainAbstractMetricsDiscrete()
+        domain_features = DummyExtraFeatures()
+        dataloaders = datamodule.dataloaders
+
+    elif dataset_config["name"] == "custom":
+        from datasets import custom_dataset
+
+        datamodule = custom_dataset.CustomDataModule(cfg)
+        dataset_infos = custom_dataset.CustomDatasetInfos(datamodule=datamodule)
         train_metrics = TrainAbstractMetricsDiscrete()
         domain_features = DummyExtraFeatures()
         dataloaders = datamodule.dataloaders
