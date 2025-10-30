@@ -13,6 +13,10 @@ TRIANGLE_MAX_BASE = 6
 MAX_SHAPES_PER_GRAPH = 30
 
 class CustomDatasetGenerator:
+    # def __init__(self, choices=['rectangle', 'triangle', 'line']):
+    def __init__(self, choices=['rectangle']):
+        self.choices = choices
+
     def __call__(self, root):
         # delete folder recursively if it exists
         if os.path.exists(root):
@@ -40,8 +44,8 @@ class CustomDatasetGenerator:
                         writer.writerow(edge)
                         seen_edges.add(edge_key)       
 
-    def _get_random_shape_type(self, choices=['rectangle', 'triangle', 'line']):
-        return random.choice(choices)
+    def _get_random_shape_type(self):
+        return random.choice(self.choices)
 
     def _generate_shape(self, shape_type=None):
         if shape_type is None:

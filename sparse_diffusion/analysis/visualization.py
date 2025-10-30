@@ -39,7 +39,7 @@ class Visualizer:
         return graph
 
     def visualize_non_molecule(
-        self, graph, pos, path, iterations=100, node_size=100, largest_component=False
+        self, graph, pos, path, iterations=100, node_size=100, largest_component=False, node_color=None, edge_color="grey"
     ):
         if largest_component:
             CGs = [graph.subgraph(c) for c in nx.connected_components(graph)]
@@ -50,11 +50,17 @@ class Visualizer:
         if pos is None:
             pos = nx.spring_layout(graph, iterations=iterations)
 
-        # Set node colors based on the eigenvectors
-        w, U = np.linalg.eigh(nx.normalized_laplacian_matrix(graph).toarray())
-        vmin, vmax = np.min(U[:, 1]), np.max(U[:, 1])
-        m = max(np.abs(vmin), vmax)
-        vmin, vmax = -m, m
+        vmin, vmax = None, None
+        if node_color is None:
+            # Set node colors based on the eigenvectors
+            w, U = np.linalg.eigh(nx.normalized_laplacian_matrix(graph).toarray())
+            vmin, vmax = np.min(U[:, 1]), np.max(U[:, 1])
+            m = max(np.abs(vmin), vmax)
+            vmin, vmax = -m, m
+            node_color = U[:, 1]
+            cmap = plt.cm.coolwarm
+        else:
+            cmap = None
 
         plt.figure()
         nx.draw(
@@ -63,11 +69,11 @@ class Visualizer:
             font_size=5,
             node_size=node_size,
             with_labels=False,
-            node_color=U[:, 1],
-            cmap=plt.cm.coolwarm,
+            node_color=node_color,
+            cmap=cmap,
             vmin=vmin,
             vmax=vmax,
-            edge_color="grey",
+            edge_color=edge_color
         )
 
         plt.tight_layout()
@@ -115,7 +121,6 @@ class Visualizer:
                     edge_attr=graphs.edge_attr[edge_mask].long().cpu().numpy(),
                 )
 
-                pos = None
                 if self.dataset_infos.dataset_name == "custom":
                     # place the nodes according to their node features
                     # node feature = composite of x, y coordinates
@@ -129,7 +134,13 @@ class Visualizer:
                         y = composite_coord % grid_size
                         pos[j] = (x, y)
 
-                self.visualize_non_molecule(graph=graph, pos=pos, path=file_path)
+                    # color edges according to weights
+                    edge_weights = [graph.get_edge_data(u, v)["color"] for u, v in graph.edges()]
+                    norm = plt.Normalize(vmin=min(edge_weights), vmax=max(edge_weights))
+                    edge_weights = [plt.cm.viridis(norm(weight)) for weight in edge_weights]
+                    self.visualize_non_molecule(graph=graph, pos=pos, path=file_path, edge_color=edge_weights, node_color="grey")
+                else:
+                    self.visualize_non_molecule(graph=graph, pos=None, path=file_path)
 
             if wandb.run is not None and log is not None:
                 if i < 3:
@@ -185,7 +196,7 @@ class Visualizer:
                 num_frames = len(node_list)
 
                 for frame in range(num_frames):
-                    file_name = os.path.join(path, "fram_{}.png".format(frame))
+                    file_name = os.path.join(path, "frame_{}.png".format(frame))
                     Draw.MolToFile(
                         mols[frame], file_name, size=(300, 300), legend=f"Frame {frame}"
                     )
@@ -221,16 +232,23 @@ class Visualizer:
                         x = composite_coord // grid_size
                         y = composite_coord % grid_size
                         final_pos[j] = (x, y)
+                    node_colors = "grey"
+
+                    # color edges according to weights
+                    edge_weights = [final_graph.get_edge_data(u, v)["color"] for u, v in final_graph.edges()]
+                    norm = plt.Normalize(vmin=min(edge_weights), vmax=max(edge_weights))
+                    edge_colors = [plt.cm.viridis(norm(weight)) for weight in edge_weights]
                 else:
                     final_pos = nx.spring_layout(final_graph, seed=0)
+                    node_colors = None
+                    edge_colors = "grey"
 
                 save_paths = []
                 num_frames = len(node_list)
-
                 for frame in range(num_frames):
-                    file_name = os.path.join(path, "fram_{}.png".format(frame))
+                    file_name = os.path.join(path, "frame_{}.png".format(frame))
                     self.visualize_non_molecule(
-                        graph=graphs[frame], pos=final_pos, path=file_name
+                        graph=graphs[frame], pos=final_pos, path=file_name, edge_color=edge_colors, node_color=node_colors
                     )
                     save_paths.append(file_name)
 

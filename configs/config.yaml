@@ -1,7 +1,7 @@
 defaults:
     - _self_
-    - general : general_custom
-#    - general : test_custom
+#    - general : general_custom
+    - general : test_custom
     - model : model_custom
     - train : train_custom
     - dataset : custom

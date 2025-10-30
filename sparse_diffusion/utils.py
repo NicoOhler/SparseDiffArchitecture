@@ -14,7 +14,7 @@ from torch_geometric.utils import (
 import torch_geometric.nn.pool as pool
 import torch
 import torch.nn.functional as F
-
+import time
 
 
 def setup_wandb(cfg):
@@ -22,8 +22,9 @@ def setup_wandb(cfg):
     name = cfg.dataset.name
     if name == "qm9" and cfg.dataset.remove_h == False:
         name = "qm9_h"
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
     kwargs = {
-        "name": cfg.general.name,
+        "name": cfg.general.name + "_" + timestamp,
         "project": f"sparse_{name}",
         "config": config_dict,
         "settings": wandb.Settings(_disable_stats=True),
