@@ -14,8 +14,9 @@ from sparse_diffusion.metrics.molecular_metrics import SparseMolecule
 
 
 class Visualizer:
-    def __init__(self, dataset_infos):
+    def __init__(self, dataset_infos, grid_shape=None):
         self.dataset_infos = dataset_infos
+        self.grid_shape = grid_shape
         self.is_molecular = self.dataset_infos.is_molecular
 
         if self.is_molecular:
@@ -124,20 +125,23 @@ class Visualizer:
                 if self.dataset_infos.dataset_name == "custom":
                     # place the nodes according to their node features
                     # node feature = composite of x, y coordinates
-                    # idx = x * grid_size + y with grid_size = sqrt(num_nodes)
-                    num_nodes = len(graph.nodes)
-                    grid_size = int(np.ceil(np.sqrt(num_nodes)))
+                    # idx = x * grid_width + y 
+                    grid_width, _ = self.grid_shape
                     pos = {}
                     for j, node_type in enumerate(graph.nodes(data=True)):
                         composite_coord = node_type[1]["symbol"].item()
-                        x = composite_coord // grid_size
-                        y = composite_coord % grid_size
-                        pos[j] = (x, y)
+                        x = composite_coord // grid_width
+                        y = composite_coord % grid_width
+                        pos[j] = (y, x)
 
                     # color edges according to weights
                     edge_weights = [graph.get_edge_data(u, v)["color"] for u, v in graph.edges()]
-                    norm = plt.Normalize(vmin=min(edge_weights), vmax=max(edge_weights))
-                    edge_weights = [plt.cm.viridis(norm(weight)) for weight in edge_weights]
+                    if len(edge_weights) > 0:
+                        norm = plt.Normalize(vmin=min(edge_weights), vmax=max(edge_weights))
+                        edge_weights = [plt.cm.viridis(norm(weight)) for weight in edge_weights]
+                    else:
+                        print("No edges in final graph")
+                        edge_weights = "grey"
                     self.visualize_non_molecule(graph=graph, pos=pos, path=file_path, edge_color=edge_weights, node_color="grey")
                 else:
                     self.visualize_non_molecule(graph=graph, pos=None, path=file_path)
@@ -157,7 +161,7 @@ class Visualizer:
         keep_chain = int(chain.batch.max() + 1)
 
         for k in range(keep_chain):
-            path = os.path.join(chain_path, f"molecule_{batch_id + k}_{local_rank}")
+            path = os.path.join(chain_path, f"graph_{batch_id + k}_{local_rank}")
             if not os.path.exists(path):
                 os.makedirs(path)
 
@@ -223,21 +227,24 @@ class Visualizer:
                 if self.dataset_infos.dataset_name == "custom":
                     # place the nodes according to their node features
                     # node feature = composite of x, y coordinates
-                    # idx = x * grid_size + y with grid_size = sqrt(num_nodes)
-                    num_nodes = len(final_graph.nodes)
-                    grid_size = int(np.ceil(np.sqrt(num_nodes)))
+                    # idx = x * grid_width + y 
+                    grid_width, _ = self.grid_shape
                     final_pos = {}
                     for j, node_type in enumerate(final_graph.nodes(data=True)):
                         composite_coord = node_type[1]["symbol"].item()
-                        x = composite_coord // grid_size
-                        y = composite_coord % grid_size
-                        final_pos[j] = (x, y)
+                        x = composite_coord // grid_width
+                        y = composite_coord % grid_width
+                        final_pos[j] = (y, x)
                     node_colors = "grey"
 
                     # color edges according to weights
                     edge_weights = [final_graph.get_edge_data(u, v)["color"] for u, v in final_graph.edges()]
-                    norm = plt.Normalize(vmin=min(edge_weights), vmax=max(edge_weights))
-                    edge_colors = [plt.cm.viridis(norm(weight)) for weight in edge_weights]
+                    if len(edge_weights) > 0:
+                        norm = plt.Normalize(vmin=min(edge_weights), vmax=max(edge_weights))
+                        edge_colors = [plt.cm.viridis(norm(weight)) for weight in edge_weights]
+                    else:
+                        print("No edges in graph")
+                        edge_colors = "grey"
                 else:
                     final_pos = nx.spring_layout(final_graph, seed=0)
                     node_colors = None
@@ -268,4 +275,3 @@ class Visualizer:
                 wandb.log(
                     {"chain": wandb.Video(gif_path, fps=8, format="gif")}, commit=False
                 )
-

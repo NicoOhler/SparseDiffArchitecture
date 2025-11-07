@@ -355,6 +355,38 @@ class SparsePlaceHolder:
         # copy.charge = collapse_charge.to(self.charge.device)[torch.argmax(self.charge, dim=-1)]
         self.edge_attr = torch.argmax(self.edge_attr, dim=-1)
 
+    def save(self, path: str, node_mask=None):
+        data_dict = {
+            'node': self.node.cpu(),
+            'edge_index': self.edge_index.cpu(),
+            'edge_attr': self.edge_attr.cpu(),
+            'y': self.y.cpu(),
+            'ptr': self.ptr.cpu() if self.ptr is not None else None,
+            'batch': self.batch.cpu() if self.batch is not None else None,
+            'charge': self.charge.cpu() if self.charge is not None else None,
+            'node_mask': node_mask.cpu() if node_mask is not None else None,
+        }
+        torch.save(data_dict, path)
+        print(f"SparsePlaceHolder saved to: {path}")
+
+    @staticmethod
+    def load(path: str, device: str = 'cpu'):
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"File not found at {path}")
+            
+        data_dict = torch.load(path)
+        instance = SparsePlaceHolder(
+            node=data_dict['node'].to(device),
+            edge_index=data_dict['edge_index'].to(device),
+            edge_attr=data_dict['edge_attr'].to(device),
+            y=data_dict['y'].to(device),
+            ptr=data_dict['ptr'].to(device) if data_dict['ptr'] is not None else None,
+            batch=data_dict['batch'].to(device) if data_dict['batch'] is not None else None,
+            charge=data_dict['charge'].to(device) if data_dict['charge'] is not None else None,
+        )
+        print(f"SparsePlaceHolder loaded from: {path}")
+        return instance, data_dict.get('node_mask', None)
+
 
 def delete_repeated_twice_edges(edge_index, edge_attr):    
     min_edge_index, min_edge_attr = coalesce(

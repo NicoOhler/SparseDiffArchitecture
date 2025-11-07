@@ -4,3 +4,9 @@ random_subset: null
 pin_memory: False
 molecules: False
 spectre: False
+grid_shape: [8, 8]              # shape of the 2D coordinate grid
+num_graphs: 100                         # number of graphs to generate for the dataset
+weight_range: [0.1, 3.0]             # range of edge weights
+shape_types: ['rectangle']              # list of shape types to include in the dataset (shape dataset)
+min_edges: 10                           # minimum number of edges in each graph (random walk dataset)
+max_edges: 60                           # maximum number of edges in each graph (random walk dataset)

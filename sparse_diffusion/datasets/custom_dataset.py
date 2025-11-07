@@ -5,12 +5,12 @@ import numpy as np
 import csv
 import torch
 import math
+import networkx as nx
 
 import torch_geometric.utils
 import torch.nn.functional as F
 from torch_geometric.data import InMemoryDataset, download_url
 from hydra.utils import get_original_cwd
-from networkx import to_numpy_array
 
 from sparse_diffusion.utils import PlaceHolder
 from sparse_diffusion.datasets.abstract_dataset import (
@@ -29,7 +29,9 @@ from sparse_diffusion.metrics.metrics_utils import (
     edge_counts,
 )
 
-import sparse_diffusion.datasets.custom_dataset_generator as dataset_generator
+import networkx as nx
+import matplotlib.pyplot as plt
+import sparse_diffusion.datasets.random_walk_dataset_generator as dataset_generator
 
 class CustomDataset(InMemoryDataset):
     def __init__(
@@ -40,6 +42,8 @@ class CustomDataset(InMemoryDataset):
         transform=None,
         pre_transform=None,
         pre_filter=None,
+        visualize=False,
+        grid_shape=(8, 8),
     ):
         self.dataset_name = dataset_name
 
@@ -51,8 +55,8 @@ class CustomDataset(InMemoryDataset):
         else:
             self.file_idx = 2
 
-        dataset_generator.CustomDatasetGenerator()(root)
-        self.grid_size = dataset_generator.GRID_SIZE
+        self.grid_height, self.grid_width = grid_shape
+        self.visualize = visualize
         super().__init__(root, transform, pre_transform, pre_filter)
         self.data, self.slices = torch.load(self.processed_paths[0])
 
@@ -114,11 +118,12 @@ class CustomDataset(InMemoryDataset):
             raise FileNotFoundError(f"No graph files found in {graphs_folder}")
         
         adjs = []
+        os.makedirs(osp.join(self.root, "graph_visualizations"), exist_ok=True)
         for file in graph_files:
             with open(osp.join(graphs_folder, file), 'r') as f:
                 reader = csv.reader(f)
                 reader.__next__()
-                n = self.grid_size * self.grid_size
+                n = self.grid_width * self.grid_height
                 adj = np.zeros((n, n))
                 for row in reader:
                     # todo handle extra attributes
@@ -127,9 +132,10 @@ class CustomDataset(InMemoryDataset):
                     idx2 = self._get_index(x2, y2)
                     weight = self._discretize_weight(weight)
                     adj[idx1, idx2], adj[idx2, idx1] = weight, weight
+                if self.visualize:
+                    self.create_visualization(adj, file)      
                 adjs.append(torch.from_numpy(adj))
-      
-            
+
         g_cpu = torch.Generator()
         g_cpu.manual_seed(1234)
         self.num_graphs = len(adjs)
@@ -161,7 +167,6 @@ class CustomDataset(InMemoryDataset):
         torch.save(train_data, self.raw_paths[0])
         torch.save(val_data, self.raw_paths[1])
         torch.save(test_data, self.raw_paths[2])
-
 
     def process(self):
         raw_dataset = torch.load(os.path.join(self.raw_dir, "{}.pt".format(self.split)))
@@ -201,16 +206,36 @@ class CustomDataset(InMemoryDataset):
         np.save(self.processed_paths[2], node_type_distribution)
         np.save(self.processed_paths[3], edge_type_distribution)
 
-
     def _get_index(self, x, y):
-        assert x >= 0 and x < self.grid_size, "x coordinate out of bounds [0, 7]: {}".format(x)
-        assert y >= 0 and y < self.grid_size, "y coordinate out of bounds [0, 7]: {}".format(y)
-        return x * self.grid_size + y
+        assert x >= 0 and x < self.grid_width, "x coordinate out of bounds: {}".format(x)
+        assert y >= 0 and y < self.grid_height, "y coordinate out of bounds: {}".format(y)
+        return x * self.grid_width + y
 
     def _discretize_weight(self, weight):
         assert weight >= 0 and weight <= 3.0, "Weight out of bounds [0, 3]: {}".format(weight)
         weight = int(math.ceil(weight))
         return weight if weight > 0 else 1
+    
+    def create_visualization(self, adj, filename):
+        graph = nx.from_numpy_array(adj)
+        pos = {}
+        for j, node_type in enumerate(graph.nodes(data=True)):
+            composite_coord = node_type[0]
+            x = composite_coord // self.grid_width
+            y = composite_coord % self.grid_width
+            pos[j] = (x, y)
+
+        # color edges according to weights
+        edge_weights = [graph.get_edge_data(u, v)["weight"] for u, v in graph.edges()]
+        norm = plt.Normalize(vmin=1, vmax=3)
+        edge_color = [plt.cm.viridis(norm(weight)) for weight in edge_weights]
+
+        plt.figure()
+        nx.draw(graph, pos, font_size=5, node_size=100, with_labels=False, node_color="grey", edge_color=edge_color)
+        plt.tight_layout()
+        plt.savefig(osp.join(self.root, "graph_visualizations", f"{filename[:-4]}.png"))
+        plt.close("all")
+    
 
 class CustomDataModule(AbstractDataModule):
     def __init__(self, cfg):
@@ -219,12 +244,14 @@ class CustomDataModule(AbstractDataModule):
         self.datadir = cfg.dataset.datadir
         base_path = pathlib.Path(get_original_cwd()).parents[0]
         root_path = os.path.join(base_path, self.datadir)
+        dataset_generator.RandomWalkGenerator(cfg).generate(root_path)
 
         datasets = {
             "train": CustomDataset(
                 dataset_name=self.cfg.dataset.name,
                 split="train",
                 root=root_path,
+                visualize=True,
             ),
             "val": CustomDataset(
                 dataset_name=self.cfg.dataset.name,
@@ -280,4 +307,58 @@ class CustomDatasetInfos(AbstractDatasetInfos):
         data.edge_attr = F.one_hot(data.edge_attr, num_classes=self.num_edge_types).float()
 
         return data
+
+class CustomDatasetVerification:
+    def __init__(self, weight_threshold=0):
+        self.weight_threshold = weight_threshold
+
+    def verify(self, graphs):
+        return 
+        # each valid graph must:
+        num_graphs = int(graphs.batch.max() + 1)
+        for i in range(num_graphs):
+            print(f"Verifying graph {i}...")
+            node_mask = graphs.batch == i
+            edge_mask = graphs.batch[graphs.edge_index[0]] == i
+            graph = self.to_networkx(
+                    node=graphs.node[node_mask].long().cpu().numpy(),
+                    edge_index=(graphs.edge_index[:, edge_mask].long() - graphs.ptr[i]).cpu().numpy(),
+                    edge_attr=graphs.edge_attr[edge_mask].long().cpu().numpy(),
+                )
+
+            # - not contain edges except for 4-neighborhood
+            # - have no duplicate edges
+            seen_edges = set()
+            for u, v in graph.edges(data=False):
+                x1, y1 = divmod(graph.nodes[u]["symbol"], dataset_generator.GRID_HEIGHT)
+                x2, y2 = divmod(graph.nodes[v]["symbol"], dataset_generator.GRID_HEIGHT)
+                if abs(x1 - x2) + abs(y1 - y2) != 1:
+                    print(f"\tWarn: graph {i} has an edge connecting non-4-neighborhood nodes: ({x1}, {y1}) - ({x2}, {y2})")
+                if (u, v) in seen_edges:
+                    print(f"\tWarn: graph {i} has duplicate edge: ({u}, {v})")
+                seen_edges.add((u, v))
+
+            # - have uniform edge weights (all edges have same weight)
+            edge_weights = [data['weight'] for u, v, data in graph.edges(data=True)]
+            counts = {}
+            for weight in edge_weights:
+                counts[weight] = counts.get(weight, 0) + 1
+            if len(counts) > 1:
+                print(f"\tWarn: graph {i} has non-uniform edge weights: {counts}")
+
+            # - have the sum of all edge weights below a certain threshold
+            if self.weight_threshold:
+                total_weight = sum(edge_weights)
+                if total_weight > self.weight_threshold:
+                    print(f"\tWarn: graph {i} has total edge weight {total_weight} exceeding threshold {self.weight_threshold}.")
+
+    def to_networkx(self, node, edge_index, edge_attr):
+        graph = nx.Graph()
+        for i in range(len(node)):
+            graph.add_node(i, number=i, symbol=node[i], color_val=node[i])
+        for i, edge in enumerate(edge_index.T):
+            edge_type = edge_attr[i]
+            graph.add_edge(edge[0], edge[1], color=edge_type, weight=3 * edge_type)
+
+        return graph
 

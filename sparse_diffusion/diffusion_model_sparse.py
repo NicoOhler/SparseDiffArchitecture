@@ -22,7 +22,7 @@ from metrics.train_metrics import TrainLossDiscrete
 from metrics.abstract_metrics import SumExceptBatchMetric, SumExceptBatchKL, NLL
 from analysis.visualization import Visualizer
 from sparse_diffusion import utils
-from sparse_diffusion.diffusion import diffusion_utils
+from sparse_diffusion.diffusion import diffusion_utils, pdm_projector
 from sparse_diffusion.diffusion.sample_edges_utils import (
     get_computational_graph,
     mask_query_graph_from_comp_graph,
@@ -74,7 +74,12 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         self.cfg = cfg
         self.test_variance = cfg.general.test_variance
         self.dataset_info = dataset_infos
-        self.visualization_tools = Visualizer(dataset_infos)
+        self.visualization_tools = Visualizer(dataset_infos, grid_shape=cfg.dataset.grid_shape)
+        if dataset_infos.dataset_name == "custom":
+            import sparse_diffusion.datasets.custom_dataset as custom_dataset
+            self.verification_tools = custom_dataset.CustomDatasetVerification()
+        else:
+            self.verification_tools = None
         self.name = cfg.general.name
         self.T = cfg.model.diffusion_steps
 
@@ -170,6 +175,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         self.save_hyperparameters(ignore=["train_metrics", "sampling_metrics"])
         self.log_every_steps = cfg.general.log_every_steps
         self.number_chain_steps = cfg.general.number_chain_steps
+        self.pdm_projector = pdm_projector.PDMProjector(cfg) if self.cfg.general.pdm_enabled else None
 
     def training_step(self, data, i):
         # The above code is using the Python debugger module `pdb` to set a breakpoint at a specific
@@ -201,6 +207,60 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         # Compute the loss on the query edges only
         sparse_pred.edge_attr = sparse_pred.edge_attr[query_mask]
         sparse_pred.edge_index = comp_edge_index[:, query_mask]
+
+        """
+        # todo remove
+        try:
+            # visualize original and predicted graphs
+            generated_graphs = sparse_pred.to_device("cpu")
+            generated_graphs.edge_attr = sparse_pred.edge_attr.argmax(-1)
+            generated_graphs.node = sparse_pred.node.argmax(-1)
+            generated_graphs.ptr = data.ptr.to('cpu')
+            self.visualization_tools.visualize(
+                    "/home/nico/projects/sample",
+                    generated_graphs,
+                    1,
+                    local_rank=0,
+                )
+        except Exception as e:
+            print(f"Visualization failed: {e}")
+        try:
+            original_data = utils.SparsePlaceHolder(
+                node=data.x,
+                edge_attr=data.edge_attr,
+                edge_index=data.edge_index,
+                y=data.y,
+                ptr=data.ptr,
+            )
+            original_graphs = original_data.to_device("cpu")
+            original_graphs.edge_attr = data.edge_attr.argmax(-1)
+            original_graphs.node = data.x.argmax(-1)
+            original_graphs.batch = generated_graphs.batch.to('cpu')
+            original_graphs.ptr = generated_graphs.ptr.to('cpu')
+            self.visualization_tools.visualize(
+                "/home/nico/projects/original",
+                original_graphs,
+                1,
+                local_rank=0,
+            )
+        except Exception as e:
+            print(f"Visualization failed: {e}")
+
+        try:
+            generated_graphs = sparse_pred.to_device("cpu")
+            generated_graphs.edge_attr = sparse_pred.edge_attr
+            generated_graphs.node = sparse_pred.node
+            generated_graphs.ptr = data.ptr.to('cpu')
+            generated_graphs = self.pdm_projector.project(generated_graphs)
+            self.visualization_tools.visualize(
+                    "/home/nico/projects/projection",
+                    generated_graphs,
+                    1,
+                    local_rank=0,
+                )
+        except Exception as e:
+            print(f"Visualization failed: {e}")
+        """
 
         # mask true label for query edges
         # We have the true edge index at time 0, and the query edge index at time t. This function
@@ -1227,6 +1287,9 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                 s_norm, t_norm, sparse_sampled_data
             )
 
+            if self.pdm_projector:
+                sparse_sampled_data = self.pdm_projector.project(sparse_sampled_data)
+
             # keep_chain can be very small, e.g., 1
             if ((s_int * number_chain_steps) % self.T == 0) and (keep_chain != 0):
                 chain.append(sparse_sampled_data)
@@ -1240,9 +1303,9 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         if self.visualization_tools is not None:
             current_path = os.getcwd()
 
-            # Visualize chains
+            # Visualize sampling process
             if keep_chain > 0:
-                print("Visualizing chains...")
+                print("Visualizing sampling process...")
                 chain_path = os.path.join(
                     current_path,
                     f"chains/{self.cfg.general.name}/" f"epoch{self.current_epoch}/",
@@ -1252,10 +1315,10 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                         chain_path, batch_id, chain, local_rank=self.local_rank
                     )
                 except OSError:
-                    print("Warn: image chains failed to be visualized ")
+                    print("Warn: visualization of image sampling failed")
 
-            # Visualize the final molecules
-            print("\nVisualizing molecules...")
+            # Visualize the final graphs
+            print("\nVisualizing final graphs...")
             result_path = os.path.join(
                 current_path,
                 f"graphs/{self.name}/epoch{self.current_epoch}_b{batch_id}/",
@@ -1268,9 +1331,13 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                     local_rank=self.local_rank,
                 )
             except OSError:
-                print("Warn: image failed to be visualized ")
+                print("Warn: visualization of final graphs failed")
 
             print("Done.")
+
+        if self.verification_tools is not None:
+            self.verification_tools.verify(generated_graphs)
+        
         return generated_graphs
 
     def sample_node(self, pred_X, p_s_and_t_given_0_X, node_mask):
