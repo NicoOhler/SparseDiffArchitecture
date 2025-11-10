@@ -39,9 +39,7 @@ class Visualizer:
 
         return graph
 
-    def visualize_non_molecule(
-        self, graph, pos, path, iterations=100, node_size=100, largest_component=False, node_color=None, edge_color="grey"
-    ):
+    def visualize_non_molecule(self, graph, path, pos=None, node_size=100, largest_component=False, custom_dataset=False):
         if largest_component:
             CGs = [graph.subgraph(c) for c in nx.connected_components(graph)]
             CGs = sorted(CGs, key=lambda x: x.number_of_nodes(), reverse=True)
@@ -49,24 +47,26 @@ class Visualizer:
 
         # Plot the graph structure with colors
         if pos is None:
-            pos = nx.spring_layout(graph, iterations=iterations)
+            pos = self._get_node_positions(graph) if custom_dataset else nx.spring_layout(graph, seed=0)
 
-        vmin, vmax = None, None
-        if node_color is None:
+        if custom_dataset:
+            vmin, vmax = None, None
+            cmap = None
+            node_color = "grey"
+        else:
             # Set node colors based on the eigenvectors
-            w, U = np.linalg.eigh(nx.normalized_laplacian_matrix(graph).toarray())
+            _, U = np.linalg.eigh(nx.normalized_laplacian_matrix(graph).toarray())
             vmin, vmax = np.min(U[:, 1]), np.max(U[:, 1])
             m = max(np.abs(vmin), vmax)
             vmin, vmax = -m, m
             node_color = U[:, 1]
             cmap = plt.cm.coolwarm
-        else:
-            cmap = None
 
         plt.figure()
         nx.draw(
             graph,
             pos,
+            edgelist=sorted(graph.edges()),
             font_size=5,
             node_size=node_size,
             with_labels=False,
@@ -74,13 +74,50 @@ class Visualizer:
             cmap=cmap,
             vmin=vmin,
             vmax=vmax,
-            edge_color=edge_color
+            edge_color=self._get_edge_colors(graph) if custom_dataset else "grey",
+            width=self._get_edge_widths(graph) if custom_dataset else 1
         )
 
         plt.tight_layout()
         plt.savefig(path)
         plt.close("all")
 
+    def _get_node_positions(self, graph):
+        # place the nodes according to their node features
+        # node feature = composite index of x, y coordinates
+        # idx = x * grid_width + y 
+        grid_width, _ = self.grid_shape
+        pos = {}
+        for j, node_type in enumerate(graph.nodes(data=True)):
+            composite_coord = node_type[1]["symbol"].item()
+            x = composite_coord // grid_width
+            y = composite_coord % grid_width
+            pos[j] = (y, x)
+        return pos
+
+    def _get_edge_colors(self, graph):
+        color_by_weight = {
+            1: "salmon",
+            2: "red",
+            3: "darkred"
+        }
+        edge_weights = [graph.get_edge_data(u, v)["color"] for u, v in sorted(graph.edges())]
+        if not len(edge_weights):
+            return "grey"
+        return [color_by_weight.get(weight, "grey") for weight in edge_weights]
+    
+    def _get_edge_widths(self, graph):
+        width_by_weight = {
+            1: 1.0,
+            2: 2.0,
+            3: 3.0
+        }
+        edge_weights = [graph.get_edge_data(u, v)["color"] for u, v in sorted(graph.edges())]
+        print(f"Sum of edge weights: {sum(edge_weights)}")
+        if not len(edge_weights):
+            return None
+        return [width_by_weight.get(weight, 1) for weight in edge_weights]
+    
     def visualize(
         self, path: str, graphs: list, num_graphs_to_visualize: int, log="graph", local_rank=0
     ):
@@ -112,7 +149,6 @@ class Visualizer:
                     Draw.MolToFile(mol, file_path)
                 except rdkit.Chem.KekulizeException:
                     print("Can't kekulize molecule")
-   
             else:
                 graph = self.to_networkx(
                     node=graphs.node[node_mask].long().cpu().numpy(),
@@ -122,29 +158,8 @@ class Visualizer:
                     edge_attr=graphs.edge_attr[edge_mask].long().cpu().numpy(),
                 )
 
-                if self.dataset_infos.dataset_name == "custom":
-                    # place the nodes according to their node features
-                    # node feature = composite of x, y coordinates
-                    # idx = x * grid_width + y 
-                    grid_width, _ = self.grid_shape
-                    pos = {}
-                    for j, node_type in enumerate(graph.nodes(data=True)):
-                        composite_coord = node_type[1]["symbol"].item()
-                        x = composite_coord // grid_width
-                        y = composite_coord % grid_width
-                        pos[j] = (y, x)
-
-                    # color edges according to weights
-                    edge_weights = [graph.get_edge_data(u, v)["color"] for u, v in graph.edges()]
-                    if len(edge_weights) > 0:
-                        norm = plt.Normalize(vmin=min(edge_weights), vmax=max(edge_weights))
-                        edge_weights = [plt.cm.viridis(norm(weight)) for weight in edge_weights]
-                    else:
-                        print("No edges in final graph")
-                        edge_weights = "grey"
-                    self.visualize_non_molecule(graph=graph, pos=pos, path=file_path, edge_color=edge_weights, node_color="grey")
-                else:
-                    self.visualize_non_molecule(graph=graph, pos=None, path=file_path)
+                custom_dataset = self.dataset_infos.dataset_name == "custom"
+                self.visualize_non_molecule(graph, file_path, custom_dataset=custom_dataset)
 
             if wandb.run is not None and log is not None:
                 if i < 3:
@@ -159,6 +174,7 @@ class Visualizer:
         ptr = chain.ptr
 
         keep_chain = int(chain.batch.max() + 1)
+        custom_dataset = self.dataset_infos.dataset_name == "custom"
 
         for k in range(keep_chain):
             path = os.path.join(chain_path, f"graph_{batch_id + k}_{local_rank}")
@@ -207,6 +223,7 @@ class Visualizer:
                     save_paths.append(file_name)
 
             else:
+                # generate graphs for each intermediate sample
                 graphs = []
                 for i in range(len(node_list)):
                     node_mask = batch == k
@@ -222,45 +239,16 @@ class Visualizer:
                     )
                     graphs.append(graph)
 
-                # find the coordinates of atoms in the final molecule
-                final_graph = graphs[-1]
-                if self.dataset_infos.dataset_name == "custom":
-                    # place the nodes according to their node features
-                    # node feature = composite of x, y coordinates
-                    # idx = x * grid_width + y 
-                    grid_width, _ = self.grid_shape
-                    final_pos = {}
-                    for j, node_type in enumerate(final_graph.nodes(data=True)):
-                        composite_coord = node_type[1]["symbol"].item()
-                        x = composite_coord // grid_width
-                        y = composite_coord % grid_width
-                        final_pos[j] = (y, x)
-                    node_colors = "grey"
-
-                    # color edges according to weights
-                    edge_weights = [final_graph.get_edge_data(u, v)["color"] for u, v in final_graph.edges()]
-                    if len(edge_weights) > 0:
-                        norm = plt.Normalize(vmin=min(edge_weights), vmax=max(edge_weights))
-                        edge_colors = [plt.cm.viridis(norm(weight)) for weight in edge_weights]
-                    else:
-                        print("No edges in graph")
-                        edge_colors = "grey"
-                else:
-                    final_pos = nx.spring_layout(final_graph, seed=0)
-                    node_colors = None
-                    edge_colors = "grey"
-
+                # visualize and save each frame
                 save_paths = []
                 num_frames = len(node_list)
                 for frame in range(num_frames):
                     file_name = os.path.join(path, "frame_{}.png".format(frame))
-                    self.visualize_non_molecule(
-                        graph=graphs[frame], pos=final_pos, path=file_name, edge_color=edge_colors, node_color=node_colors
-                    )
+                    self.visualize_non_molecule(graphs[frame], file_name, custom_dataset=custom_dataset)
                     save_paths.append(file_name)
 
+            # create gif
             print("\r{}/{} complete".format(k + 1, keep_chain), end="", flush=True)
-
             imgs = [imageio.v3.imread(fn) for fn in save_paths]
             gif_path = os.path.join(
                 os.path.dirname(path), "{}_{}.gif".format(path.split("/")[-1], local_rank)

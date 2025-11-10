@@ -3,13 +3,13 @@ name: 'custom'      # Warning: 'debug' and 'test' are reserved name that have a 
 wandb: 'online'             # online | offline | disabled
 gpus: 1                     # Multi-gpu is not implemented on this branch
 
-resume: /home/nico/projects/outputs/2025-11-06/10-14-19-custom/checkpoints/custom/epoch=94.ckpt            # If resume, path to ckpt file from outputs directory in main directory
+resume: null            # If resume, path to ckpt file from outputs directory in main directory
 test_only: null         # Use absolute path
 test_variance: 1
 generated_path: null    # path of generated samples, this file should be of pickle type
 
-check_val_every_n_epochs: 5
-sample_every_val: 5
+check_val_every_n_epochs: 20
+sample_every_val: 20
 val_check_interval: null
 samples_to_generate: 8       # We advise to set it to 2 x batch_size maximum
 samples_to_save: 8
@@ -25,7 +25,8 @@ evaluate_all_checkpoints: False
 
 # sampling skip
 skip: 1
-pdm_enabled: True                         # enforce PDM constraints during sampling
+pdm_enabled: False                         # enforce PDM constraints during sampling
+project_only_last_step: True             # if False, project at each sampling step
 # resampling_per_step: 1                    # number of sample + projection iterations per diffusion step
 max_weight: 40                            # sum of all edge weights per graph must be below this value
 four_neighborhood: True                   # if True, only 4-neighborhood edges are allowed, others will be removed during projection

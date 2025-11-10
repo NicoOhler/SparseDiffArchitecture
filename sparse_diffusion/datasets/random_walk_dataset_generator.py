@@ -10,6 +10,7 @@ class RandomWalkGenerator:
         self.max_edges = cfg.dataset.max_edges
         self.num_graphs = cfg.dataset.num_graphs
         self.weight_range = cfg.dataset.weight_range
+        self.delete_existing = cfg.dataset.regenerate_dataset
 
     def _is_valid(self, x, y):
         return 0 <= x < self.grid_width and 0 <= y < self.grid_height
@@ -55,13 +56,16 @@ class RandomWalkGenerator:
         return list(edges)
 
     def generate(self, root):
-        print(f"Generating {self.num_graphs} connected graphs...")
-        
         graphs_dir = f"{root}/graphs"
         if os.path.exists(graphs_dir):
-            shutil.rmtree(graphs_dir)
+            if self.delete_existing:
+                shutil.rmtree(graphs_dir)
+            else:
+                print(f"Directory {graphs_dir} already exists. Skipping generation.")
+                return
+        
+        print(f"Generating {self.num_graphs} connected graphs...")
         os.makedirs(graphs_dir, exist_ok=True)
-
         for i in range(1, self.num_graphs + 1):
             filename = f"{graphs_dir}/graph_{i}.csv"
             

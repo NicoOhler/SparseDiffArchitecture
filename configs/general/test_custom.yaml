@@ -4,7 +4,7 @@ wandb: 'offline'             # online | offline | disabled
 gpus: 1                     # Multi-gpu is not implemented on this branch
 
 resume: null            # If resume, path to ckpt file from outputs directory in main directory
-test_only: /home/nico/projects/outputs/2025-11-06/10-14-19-custom/checkpoints/custom/epoch=94.ckpt           # Use absolute path
+test_only: /home/nico/projects/SparseDiffArchitecture/outputs/2025-11-08/10-26-00-custom/checkpoints/custom/last.ckpt          # Use absolute path
 test_variance: 1
 generated_path: null    # path of generated samples, this file should be of pickle type
 
@@ -17,15 +17,16 @@ chains_to_save: 10
 log_every_steps: 50
 number_chain_steps: 50        # Number of frames in each gif
 
-final_model_samples_to_generate: 1
-final_model_samples_to_save: 1
-final_model_chains_to_save: 1
+final_model_samples_to_generate: 10
+final_model_samples_to_save: 10
+final_model_chains_to_save: 10
 
 evaluate_all_checkpoints: False
 
 # sampling parameters
-skip: 200
+skip: 1
 pdm_enabled: True                         # enforce PDM constraints during sampling
+project_only_last_step: True             # if False, project at each sampling step
 # resampling_per_step: 1                    # number of sample + projection iterations per diffusion step
-max_weight: 40                            # sum of all edge weights per graph must be below this value
+max_weight: 22                            # sum of all edge weights per graph must be below this value
 four_neighborhood: True                   # if True, only 4-neighborhood edges are allowed, others will be removed during projection
