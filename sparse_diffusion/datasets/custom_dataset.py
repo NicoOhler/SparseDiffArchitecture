@@ -6,10 +6,11 @@ import csv
 import torch
 import math
 import networkx as nx
+import tqdm
 
 import torch_geometric.utils
 import torch.nn.functional as F
-from torch_geometric.data import InMemoryDataset, download_url
+from torch_geometric.data import InMemoryDataset
 from hydra.utils import get_original_cwd
 
 from sparse_diffusion.utils import PlaceHolder
@@ -31,7 +32,7 @@ from sparse_diffusion.metrics.metrics_utils import (
 
 import networkx as nx
 import matplotlib.pyplot as plt
-import sparse_diffusion.datasets.random_walk_dataset_generator as dataset_generator
+import sparse_diffusion.datasets.dataset_generator as dataset_generator
 
 class CustomDataset(InMemoryDataset):
     def __init__(
@@ -118,8 +119,11 @@ class CustomDataset(InMemoryDataset):
             raise FileNotFoundError(f"No graph files found in {graphs_folder}")
         
         adjs = []
-        os.makedirs(osp.join(self.root, "graph_visualizations"), exist_ok=True)
-        for file in graph_files:
+        if self.visualize:
+            print(f"Creating graph visualizations...")
+            os.makedirs(osp.join(self.root, "graph_visualizations"), exist_ok=True)
+
+        for file in tqdm.tqdm(graph_files):
             with open(osp.join(graphs_folder, file), 'r') as f:
                 reader = csv.reader(f)
                 reader.__next__()
@@ -135,6 +139,8 @@ class CustomDataset(InMemoryDataset):
                 if self.visualize:
                     self.create_visualization(adj, file)      
                 adjs.append(torch.from_numpy(adj))
+        if self.visualize:
+            print(f"Graph visualizations saved to {osp.join(self.root, 'graph_visualizations')}")
 
         g_cpu = torch.Generator()
         g_cpu.manual_seed(1234)
@@ -227,11 +233,16 @@ class CustomDataset(InMemoryDataset):
 
         # color edges according to weights
         edge_weights = [graph.get_edge_data(u, v)["weight"] for u, v in graph.edges()]
-        norm = plt.Normalize(vmin=1, vmax=3)
-        edge_color = [plt.cm.viridis(norm(weight)) for weight in edge_weights]
+        width_and_color_by_weight = {
+            1: (1.0, 'salmon'),
+            2: (2.0, 'red'),
+            3: (3.0, 'darkred')
+        }
+        edge_colors = [width_and_color_by_weight.get(weight, (1.0, 'grey'))[1] for weight in edge_weights]
+        edge_widths = [width_and_color_by_weight.get(weight, (1.0, 'grey'))[0] for weight in edge_weights]
 
         plt.figure()
-        nx.draw(graph, pos, font_size=5, node_size=100, with_labels=False, node_color="grey", edge_color=edge_color)
+        nx.draw(graph, pos, font_size=5, node_size=100, with_labels=False, node_color="grey", edge_color=edge_colors, width=edge_widths)
         plt.tight_layout()
         plt.savefig(osp.join(self.root, "graph_visualizations", f"{filename[:-4]}.png"))
         plt.close("all")
@@ -244,24 +255,27 @@ class CustomDataModule(AbstractDataModule):
         self.datadir = cfg.dataset.datadir
         base_path = pathlib.Path(get_original_cwd()).parents[0]
         root_path = os.path.join(base_path, self.datadir)
-        dataset_generator.RandomWalkGenerator(cfg).generate(root_path)
+        dataset_generator.get_dataset_generator(self.cfg).generate(root_path)
 
         datasets = {
             "train": CustomDataset(
                 dataset_name=self.cfg.dataset.name,
                 split="train",
                 root=root_path,
-                visualize=True,
+                visualize=cfg.dataset.visualize,
+                grid_shape=cfg.dataset.grid_shape,
             ),
             "val": CustomDataset(
                 dataset_name=self.cfg.dataset.name,
                 split="val",
                 root=root_path,
+                grid_shape=cfg.dataset.grid_shape,
             ),
             "test": CustomDataset(
                 dataset_name=self.cfg.dataset.name,
                 split="test",
                 root=root_path,
+                grid_shape=cfg.dataset.grid_shape,
             ),
         }
 

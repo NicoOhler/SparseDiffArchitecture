@@ -189,8 +189,7 @@ def main(cfg: DictConfig):
     use_gpu = cfg.general.gpus > 0 and torch.cuda.is_available()
     trainer = pl.Trainer(
         gradient_clip_val=cfg.train.clip_grad,
-        strategy="ddp",
-        # strategy="ddp_find_unused_parameters_true",
+        strategy="ddp_find_unused_parameters_true",
         accelerator="gpu" if use_gpu else "cpu",
         devices=cfg.general.gpus if use_gpu else 1,
         val_check_interval=cfg.general.val_check_interval,

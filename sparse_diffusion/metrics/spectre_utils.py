@@ -1126,7 +1126,8 @@ class CustomSamplingMetrics(SpectreSamplingMetrics):
             dataloaders=dataloaders,
             compute_emd=False,
             test=test,
-            metrics_list=["degree", "clustering", "orbit", "spectre"],
+            # metrics_list=["degree", "clustering", "orbit", "spectre"],
+            metrics_list=["planar"],
         )
 
 

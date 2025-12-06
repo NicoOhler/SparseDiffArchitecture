@@ -13,7 +13,7 @@ class TrainLossDiscrete(nn.Module):
         self.y_loss = CrossEntropyMetric()
         self.charge_loss = CrossEntropyMetric()
         self.lambda_train = lambda_train
-        self.lambda_train[0] = self.lambda_train[0] / edge_fraction
+        self.lambda_train[1] = self.lambda_train[1] / edge_fraction
 
     def forward(self, pred, true_data, log: bool):
         loss_X = (
@@ -42,10 +42,10 @@ class TrainLossDiscrete(nn.Module):
                 wandb.log(to_log, commit=True)
 
         return (
-            loss_X
-            + self.lambda_train[0] * loss_E
-            + self.lambda_train[1] * loss_y
-            + self.lambda_train[2] * loss_charge
+            self.lambda_train[0] * loss_X
+            + self.lambda_train[1] * loss_E
+            + self.lambda_train[2] * loss_y
+            + self.lambda_train[3] * loss_charge
         )
 
     def reset(self):

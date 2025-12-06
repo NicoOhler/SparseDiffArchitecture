@@ -22,7 +22,7 @@ from metrics.train_metrics import TrainLossDiscrete
 from metrics.abstract_metrics import SumExceptBatchMetric, SumExceptBatchKL, NLL
 from analysis.visualization import Visualizer
 from sparse_diffusion import utils
-from sparse_diffusion.diffusion import diffusion_utils, pdm_projector
+from sparse_diffusion.diffusion import diffusion_utils, pdm
 from sparse_diffusion.diffusion.sample_edges_utils import (
     get_computational_graph,
     mask_query_graph_from_comp_graph,
@@ -170,7 +170,9 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         self.save_hyperparameters(ignore=["train_metrics", "sampling_metrics"])
         self.log_every_steps = cfg.general.log_every_steps
         self.number_chain_steps = cfg.general.number_chain_steps
-        self.pdm_projector = pdm_projector.PDMProjector(cfg) if self.cfg.general.pdm_enabled else None
+        self.pdm_strategy = cfg.general.pdm_strategy
+        self.pdm = pdm.PDM(cfg) if self.pdm_strategy != "never" else None
+        self.keep_X_fixed = cfg.model.keep_X_fixed
 
     def training_step(self, data, i):
         # The above code is using the Python debugger module `pdb` to set a breakpoint at a specific
@@ -198,6 +200,9 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         sparse_noisy_data["comp_edge_index_t"] = comp_edge_index
         sparse_noisy_data["comp_edge_attr_t"] = comp_edge_attr
         sparse_pred = self.forward(sparse_noisy_data)
+
+        if self.keep_X_fixed:
+            sparse_pred.node = data.x  # keep node features fixed
 
         # Compute the loss on the query edges only
         sparse_pred.edge_attr = sparse_pred.edge_attr[query_mask]
@@ -232,15 +237,11 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             batch=data.batch,
         )
         true_data.collapse()  # Map one-hot to discrete class
+
         # Loss calculation
-        loss = self.train_loss.forward(
-            pred=sparse_pred,
-            true_data=true_data,
-            log=i % self.log_every_steps == 0,
-        )
-        self.train_metrics(
-            pred=sparse_pred, true_data=true_data, log=i % self.log_every_steps == 0
-        )
+        log = i % self.log_every_steps == 0
+        loss = self.train_loss.forward(sparse_pred, true_data, log)
+        self.train_metrics(sparse_pred, true_data, log)
 
         return {"loss": loss}
 
@@ -418,7 +419,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
 
         # to dense
         dense_pred, node_mask = utils.to_dense(
-            x=all_node,
+            x=all_node if not self.keep_X_fixed else data.x,
             edge_index=all_edge_index,
             edge_attr=all_edge_attr,
             batch=sparse_pred.batch,
@@ -837,7 +838,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             "beta_t": beta_t,
             "alpha_s_bar": alpha_s_bar,
             "alpha_t_bar": alpha_t_bar,
-            "node_t": node_t,
+            "node_t": node_t if not self.keep_X_fixed else data.x,
             "edge_index_t": E_t_index,
             "edge_attr_t": E_t_attr,
             "comp_edge_index_t": None,
@@ -868,9 +869,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         kl_prior = self.kl_prior(X, E, node_mask, charge=charge)
 
         # 3. Diffusion loss
-        loss_all_t = self.compute_Lt(
-            X, E, y, charge, pred, noisy_data, node_mask, test=test
-        )
+        loss_all_t = self.compute_Lt(X, E, y, charge, pred, noisy_data, node_mask, test)
 
         # Combine terms
         nlls = -log_pN + kl_prior + loss_all_t
@@ -1064,6 +1063,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         return self.T * loss
 
     def reconstruction_logp(self, t, X, E, node_mask, charge):
+        assert False
         # Compute noise values for t = 0.
         t_zeros = torch.zeros_like(t)
         beta_0 = self.noise_schedule(t_zeros)
@@ -1095,6 +1095,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
 
         # Predictions
         noisy_data = {
+            # ? do I need to keep X fixed?
             "X_t": sampled_0.X,
             "E_t": sampled_0.E,
             "y_t": sampled_0.y,
@@ -1160,7 +1161,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         noisy data contains: node_t, comp_edge_index_t, comp_edge_attr_t, batch
         """
         # build the sparse_noisy_data for the forward function of the sparse model
-        sparse_noisy_data = self.compute_extra_data(sparse_noisy_data=noisy_data)
+        sparse_noisy_data = self.compute_extra_data(noisy_data)
 
         if self.sign_net and self.cfg.model.extra_features == "all":
             x = self.sign_net(
@@ -1170,9 +1171,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             )
             sparse_noisy_data["node_t"] = torch.hstack([sparse_noisy_data["node_t"], x])
 
-        res = self.forward_sparse(sparse_noisy_data)
-
-        return res
+        return self.forward_sparse(sparse_noisy_data)
 
     @torch.no_grad()
     def sample_batch(
@@ -1216,6 +1215,17 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         sparse_sampled_data = diffusion_utils.sample_sparse_discrete_feature_noise(
             limit_dist=self.limit_dist, node_mask=node_mask
         )
+        if self.keep_X_fixed:
+            # initialize node features with fixed coordinates (order is random for each graph)
+            grid_width, grid_height = self.cfg.dataset.grid_shape
+            grid_size = grid_width * grid_height
+            node_positions = []
+            for i in range(batch_size):
+                num_nodes_in_graph = num_nodes[i].item()
+                shuffled_positions = torch.randperm(num_nodes_in_graph, device=self.device)
+                one_hot_positions = F.one_hot(shuffled_positions, num_classes=grid_size).float()
+                node_positions.append(one_hot_positions)
+            sparse_sampled_data.node = torch.cat(node_positions, dim=0)
 
         assert number_chain_steps < self.T
         chain = utils.SparseChainPlaceHolder(keep_chain=keep_chain)
@@ -1232,17 +1242,24 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             sparse_sampled_data = self.sample_p_zs_given_zt(s_norm, t_norm, sparse_sampled_data)
 
             # apply PDM projection (project data onto feasible constraint set)
-            if self.pdm_projector and not self.cfg.general.project_only_last_step:
-                sparse_sampled_data = self.pdm_projector.project(sparse_sampled_data)
+            if self.pdm_strategy == "always":
+                sparse_sampled_data = self.pdm.project(sparse_sampled_data)
 
             # keep_chain can be very small, e.g., 1
             if ((s_int * number_chain_steps) % self.T == 0) and (keep_chain != 0):
                 chain.append(sparse_sampled_data)
 
+        # apply PDM projection as the last step
+        if self.pdm_strategy == "last":
+            if self.cfg.general.log_violations:
+                violations = self.pdm.detect_violations(sparse_sampled_data)
+                if wandb.run:
+                    print("Sampled graph violations:")
+                    for i, violation in enumerate(violations):
+                        print(f"\t{i}: {violation}")
+                        wandb.log(violation, commit=True)
 
-        # project last one
-        if self.pdm_projector and self.cfg.general.project_only_last_step:
-            sparse_sampled_data = self.pdm_projector.project(sparse_sampled_data)
+            sparse_sampled_data = self.pdm.project(sparse_sampled_data)
             chain.append(sparse_sampled_data)
 
         # get generated graphs
@@ -1254,7 +1271,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         
         if self.visualization_tools is not None:
             self.visualize_samples(generated_graphs, batch_id, keep_chain, chain, save_final)
-        
+
         return generated_graphs
 
     def visualize_samples(self, generated_graphs, batch_id, keep_chain, chain, save_final):
@@ -1327,6 +1344,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
     def sample_node_edge(
         self, pred, p_s_and_t_given_0_X, p_s_and_t_given_0_E, node_mask
     ):
+        assert False
         _, prob_X = self.sample_node(pred.X, p_s_and_t_given_0_X, node_mask)
         _, prob_E = self.sample_edge(pred.E, p_s_and_t_given_0_E, node_mask)
 
@@ -1556,13 +1574,12 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                 sparse_pred.charge,
                 p_s_and_t_given_0_charge,
             )
-            # get nodes, charges adn edge index
+            # get nodes, charges and edge index
             new_node = sampled_node
             new_charge = sampled_charge if self.use_charge else charge
             sampled_edge_index = comp_edge_index[:, query_mask]
 
             # update edges iteratively
-
             sampled_edge_index, sampled_edge_attr = utils.undirected_to_directed(
                 sampled_edge_index, sampled_edge_attr
             )
@@ -1624,11 +1641,11 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         assert torch.argmax(new_edge_attr, -1).min() > 0
         assert new_edge_attr.max() < 2
 
-        data.node = new_node
+        if not self.keep_X_fixed:
+            data.node = new_node
         data.edge_index = new_edge_index
         data.edge_attr = new_edge_attr
         data.charge = new_charge
-
         return data
 
     def compute_sparse_extra_data(self, sparse_noisy_data):

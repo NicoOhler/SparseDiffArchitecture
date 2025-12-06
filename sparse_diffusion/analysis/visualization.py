@@ -113,7 +113,6 @@ class Visualizer:
             3: 3.0
         }
         edge_weights = [graph.get_edge_data(u, v)["color"] for u, v in sorted(graph.edges())]
-        print(f"Sum of edge weights: {sum(edge_weights)}")
         if not len(edge_weights):
             return None
         return [width_by_weight.get(weight, 1) for weight in edge_weights]
