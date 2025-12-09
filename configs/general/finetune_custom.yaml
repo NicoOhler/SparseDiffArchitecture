@@ -1,19 +1,19 @@
 # General settings
-name: 'train'      # Warning: 'debug' and 'test' are reserved name that have a special behavior
+name: 'finetune'      # Warning: 'debug' and 'test' are reserved name that have a special behavior
 wandb: 'online'             # online | offline | disabled
 gpus: 1                     # Multi-gpu is not implemented on this branch
 
-resume: null           # If resume, path to ckpt file from outputs directory in main directory
+resume: /home/nico/projects/SparseDiffArchitecture/outputs/2025-12-07/22-00-30-train/checkpoints/train/last.ckpt            # If resume, path to ckpt file from outputs directory in main directory
 test_only: null         # Use absolute path
 test_variance: 1
 generated_path: null    # path of generated samples, this file should be of pickle type
 
 check_val_every_n_epochs: 1
-sample_every_val: 10
+sample_every_val: 4
 val_check_interval: null
-samples_to_generate: 8       # We advise to set it to 2 x batch_size maximum
-samples_to_save: 8
-chains_to_save: 8
+samples_to_generate: 4       # We advise to set it to 2 x batch_size maximum
+samples_to_save: 4
+chains_to_save: 4
 log_every_steps: 50
 number_chain_steps: 50        # Number of frames in each gif
 

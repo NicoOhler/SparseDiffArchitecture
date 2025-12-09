@@ -1,4 +1,3 @@
-import time
 import os
 import math
 import pickle
@@ -36,6 +35,7 @@ from sparse_diffusion.diffusion.sample_edges import (
     sampled_condensed_indices_uniformly,
 )
 from sparse_diffusion.models.sign_pos_encoder import SignNetNodeEncoder
+from sparse_diffusion.datasets.dataset_generator import generate_edge_crossings_lookup_table
 
 
 class DiscreteDenoisingDiffusion(pl.LightningModule):
@@ -78,7 +78,10 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         self.name = cfg.general.name
         self.T = cfg.model.diffusion_steps
 
-        self.train_loss = TrainLossDiscrete(cfg.model.lambda_train, self.edge_fraction)
+        self.train_loss = TrainLossDiscrete(
+            cfg.model.lambda_train, 
+            self.edge_fraction, 
+        )
         self.train_metrics = train_metrics
         self.val_sampling_metrics = val_sampling_metrics
         self.test_sampling_metrics = test_sampling_metrics
@@ -173,6 +176,10 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         self.pdm_strategy = cfg.general.pdm_strategy
         self.pdm = pdm.PDM(cfg) if self.pdm_strategy != "never" else None
         self.keep_X_fixed = cfg.model.keep_X_fixed
+        self.negative_sampling_odds = cfg.train.negative_sampling_odds
+        if self.negative_sampling_odds > 0:
+            assert self.cfg.train.batch_size == 1, "Negative sampling only supported for batch_size=1"
+            self.edge_crossings_lookup = generate_edge_crossings_lookup_table()
 
     def training_step(self, data, i):
         # The above code is using the Python debugger module `pdb` to set a breakpoint at a specific
@@ -184,7 +191,8 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         # Map discrete classes to one hot encoding
         data = self.dataset_info.to_one_hot(data)
 
-        sparse_noisy_data = self.apply_sparse_noise(data)
+        negative_sampling = torch.rand(1).item() < self.negative_sampling_odds
+        sparse_noisy_data = self.apply_sparse_noise(data, negative_sampling=negative_sampling)
         # Sample the query edges and build the computational graph = union(noisy graph, query edges)
         triu_query_edge_index, _ = sample_query_edges(
             num_nodes_per_graph=data.ptr.diff(), edge_proportion=self.edge_fraction
@@ -238,11 +246,51 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         )
         true_data.collapse()  # Map one-hot to discrete class
 
-        # Loss calculation
+        # negative sampling (penalize edge crossing)
+        if negative_sampling:
+            grid_width = self.cfg.dataset.grid_shape[0]
+            coordinates = torch.argmax(sparse_pred.node[sparse_pred.edge_index], dim=2)
+            x_coordinates = coordinates % grid_width
+            y_coordinates = coordinates // grid_width
+            x_coordinates_start, x_coordinates_end = x_coordinates[0], x_coordinates[1]
+            y_coordinates_start, y_coordinates_end = y_coordinates[0], y_coordinates[1]
+
+            negative_sample_found = False
+            while not negative_sample_found:
+                # choose a random edge from the noisy ground truth graph
+                random_edge = torch.randint(0, sparse_noisy_data["edge_index_t"].shape[1], (1,)).item()
+                start_node, end_node = sparse_noisy_data["edge_index_t"][:, random_edge]
+
+                # convert to actual coordinates
+                start_node, end_node = true_data.node[start_node].item(), true_data.node[end_node].item()
+                start_x, start_y = start_node % grid_width, start_node // grid_width
+                end_x, end_y = end_node % grid_width, end_node // grid_width
+                
+                # iterate over its potential crossing edges
+                direction = (end_x - start_x, end_y - start_y)
+                potential_edge_crossings = self.edge_crossings_lookup.get(direction, [])
+                for ((start_offset_x, start_offset_y), (end_offset_x, end_offset_y)) in potential_edge_crossings:
+                    # check if crossing edge is a query edge
+                    crossing_start_x, crossing_start_y = start_x + start_offset_x, start_y + start_offset_y
+                    crossing_end_x, crossing_end_y = end_x + end_offset_x, end_y + end_offset_y
+                    same_start = (x_coordinates_start == crossing_start_x) & (y_coordinates_start == crossing_start_y)
+                    same_end = (x_coordinates_end == crossing_end_x) & (y_coordinates_end == crossing_end_y)
+                    same_start_reverse = (x_coordinates_start == crossing_start_x) & (y_coordinates_start == crossing_start_y)
+                    same_end_reverse = (x_coordinates_end == crossing_end_x) & (y_coordinates_end == crossing_end_y)
+                    negative_samples = (same_start & same_end) | (same_start_reverse & same_end_reverse)
+                    
+                    # if yes, perform negative sampling on it
+                    if negative_samples.sum() > 0: 
+                        # replace prediction with ground truth edges, except for negative sample (i.e. cross entropy = 0 for other edges)
+                        remaining_samples = true_data.edge_attr[~negative_samples]
+                        remaining_samples = F.one_hot(remaining_samples, num_classes=self.out_dims.E)
+                        sparse_pred.edge_attr[~negative_samples] = remaining_samples.float()
+                        negative_sample_found = True
+                        break
+
         log = i % self.log_every_steps == 0
         loss = self.train_loss.forward(sparse_pred, true_data, log)
         self.train_metrics(sparse_pred, true_data, log)
-
         return {"loss": loss}
 
     def on_fit_start(self) -> None:
@@ -741,12 +789,13 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                 )
                 print("Final model checkpoint uploaded to wandb.")
 
-    def apply_sparse_noise(self, data):
+    def apply_sparse_noise(self, data, negative_sampling=False):
         """Sample noise and apply it to the data."""
         bs = int(data.batch.max() + 1)
-        t_int = torch.randint(
-            1, self.T + 1, size=(bs, 1), device=self.device
-        ).float()  # (bs, 1)
+        t_int = torch.randint(1, self.T + 1, size=(bs, 1), device=self.device).float()  # (bs, 1)
+        if negative_sampling:
+            # perform negative sampling only on last step
+            t_int = torch.ones_like(t_int) 
 
         s_int = t_int - 1
         t_float = t_int / self.T
