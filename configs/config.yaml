@@ -1,8 +1,8 @@
 defaults:
     - _self_
-    - general : finetune_custom
-    - model : model_finetune_custom
-    - train : negative_sampling_custom
+    - general : sample_custom
+    - model : model_custom
+    - train : train_custom
     - dataset : custom
 
 hydra:

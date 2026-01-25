@@ -4,7 +4,10 @@ wandb: 'online'             # online | offline | disabled
 gpus: 1                     # Multi-gpu is not implemented on this branch
 
 resume: null            # If resume, path to ckpt file from outputs directory in main directory
-test_only: /home/nico/projects/SparseDiffArchitecture/outputs/2025-12-07/22-00-30-train/checkpoints/train/last.ckpt # Use absolute path
+# test_only: /home/nico/projects/SparseDiffArchitecture/outputs/2025-12-07/22-00-30-train/checkpoints/train/last.ckpt # baseline after 100
+test_only: /home/nico/projects/SparseDiffArchitecture/outputs/2025-12-17/16-00-07-train/checkpoints/train/last.ckpt # baseline after 200
+# test_only: /home/nico/projects/SparseDiffArchitecture/outputs/2025-12-15/14-14-53-finetune/checkpoints/finetune/last.ckpt # finetune after 100, all t, odds=0.1, no y
+# test_only: /home/nico/projects/SparseDiffArchitecture/outputs/2025-12-14/14-54-22-finetune/checkpoints/finetune/last.ckpt # finetune after 100, all t, odds=0.1, with y
 test_variance: 1
 generated_path: null    # path of generated samples, this file should be of pickle type
 

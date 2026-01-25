@@ -4,7 +4,7 @@ random_subset: null
 pin_memory: True
 molecules: False
 spectre: False
-regenerate_dataset: True       # whether to regenerate the dataset even if it already exists
+regenerate_dataset: False       # whether to regenerate the dataset even if it already exists
 visualize: False                # whether to create visualizations of the graphs
 type: 'random_walk'                     # type of dataset: 'shape' or 'random_walk'
 grid_shape: [8, 8]              # shape of the 2D coordinate grid

@@ -1294,6 +1294,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
 
         assert number_chain_steps < self.T
         chain = utils.SparseChainPlaceHolder(keep_chain=keep_chain)
+        chain.append(sparse_sampled_data)
 
         # Iteratively sample p(z_s | z_t) for t = 1, ..., T, with s = t - 1.
         time_range = torch.arange(0, self.T, self.cfg.general.skip)

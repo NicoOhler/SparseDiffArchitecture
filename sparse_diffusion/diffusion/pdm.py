@@ -63,8 +63,8 @@ class PDM:
 
     def project(self, sample):
         sample = self._enforce_legal_edges(sample)
-        # if self.planar:
-        #     sample = self._enforce_planarity(sample)
+        if self.planar:
+            sample = self._enforce_planarity(sample)
         if self.connected:
             sample = self._enforce_connectivity(sample)
         if self.max_weight:
