@@ -1,7 +1,7 @@
 # Training settings
 n_epochs: 200 # this includes the epochs before negative sampling
-negative_sampling_odds: 1.0 # 0.3  # likelihood of negative sampling (i.e. penalizing crossing edges)
-batch_size: 1 
+negative_sampling_odds: 0.25  # likelihood of negative sampling (i.e. penalizing crossing edges)
+batch_size: 32
 lr: 0.0001
 clip_grad: null          # float, null to disable
 save_model: True

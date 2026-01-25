@@ -31,4 +31,4 @@ hidden_mlp_dims: { 'X': 128, 'E': 128, 'y': 256}
 # The dimensions should satisfy dx % n_head == 0
 # hidden_dims : {'dx': 256, 'de': 64, 'dy': 64, 'n_head': 8, 'dim_ffX': 128, 'dim_ffE': 128, 'dim_ffy': 128}
 hidden_dims : {'dx': 256, 'de': 128, 'dy': 64, 'n_head': 8, 'dim_ffX': 128, 'dim_ffE': 256, 'dim_ffy': 128}
-lambda_train: [0, 1, 0, 0]              # scaling for loss terms [X, E, y, charge]
+lambda_train: [0, 10, 1, 0]              # scaling for loss terms [X, E, y, charge]

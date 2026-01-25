@@ -1,7 +1,7 @@
 import torch.nn as nn
+import torch
 import wandb
 from sparse_diffusion.metrics.abstract_metrics import CrossEntropyMetric
-
 
 class TrainLossDiscrete(nn.Module):
     """Train with Cross entropy"""
@@ -15,13 +15,21 @@ class TrainLossDiscrete(nn.Module):
         self.lambda_train = lambda_train
         self.lambda_train[1] = self.lambda_train[1] / edge_fraction
 
-    def forward(self, pred, true_data, log: bool):
+    def forward(self, pred, true_data, log: bool, negative_samples=None):
         loss_X = (
             self.node_loss(pred.node, true_data.node)
             if true_data.node.numel() > 0
             else 0.0
         )
-        loss_E = self.edge_loss(pred.edge_attr, true_data.edge_attr)
+        if negative_samples is None:
+            loss_E = self.edge_loss(pred.edge_attr, true_data.edge_attr)
+        else:
+            # multiply edges with 0 except for negative samples
+            weight = torch.ones_like(negative_samples, dtype=torch.float32)
+            weight *= self.lambda_train[1]
+            weight[~negative_samples] = 0.0   # zero out non-negatives OR use a small epsilon
+            loss_E = self.edge_loss(pred.edge_attr, true_data.edge_attr, weight=weight)
+        
         loss_y = 0.0
         loss_charge = self.charge_loss(pred.charge, true_data.charge) if pred.charge.numel() > 0 else 0.0
 

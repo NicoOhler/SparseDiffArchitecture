@@ -4,7 +4,7 @@ wandb: 'online'             # online | offline | disabled
 gpus: 1                     # Multi-gpu is not implemented on this branch
 
 resume: null            # If resume, path to ckpt file from outputs directory in main directory
-test_only: /home/nico/projects/SparseDiffArchitecture/outputs/2025-11-12/23-06-32-custom/checkpoints/custom/last.ckpt          # Use absolute path
+test_only: /home/nico/projects/SparseDiffArchitecture/outputs/2025-12-07/22-00-30-train/checkpoints/train/last.ckpt # Use absolute path
 test_variance: 1
 generated_path: null    # path of generated samples, this file should be of pickle type
 
@@ -17,9 +17,9 @@ chains_to_save: 10
 log_every_steps: 50
 number_chain_steps: 50        # Number of frames in each gif
 
-final_model_samples_to_generate: 100
-final_model_samples_to_save: 100
-final_model_chains_to_save: 100
+final_model_samples_to_generate: 10
+final_model_samples_to_save: 10
+final_model_chains_to_save: 10
 
 evaluate_all_checkpoints: False
 
@@ -29,4 +29,4 @@ log_violations: True                      # whether to log the violations
 pdm_strategy: "last"                      # when to apply PDM during sampling: "never", "always", "last" 
 connected: True                           # whether to enforce connectivity during projection
 planar: True                              # whether to enforce planarity during projection
-max_weight: 60                            # sum of all edge weights per graph must be below this value, 0 means no limit
+max_weight: 0                            # sum of all edge weights per graph must be below this value, 0 means no limit

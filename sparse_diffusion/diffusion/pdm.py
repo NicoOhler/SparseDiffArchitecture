@@ -3,7 +3,7 @@ import torch
 from torch_scatter import scatter_add
 from sparse_diffusion.datasets.dataset_generator import generate_edge_crossings_lookup_table
 import networkx as nx
-from sparse_diffusion.utils import SparsePlaceHolder
+from collections import deque
 
 class PDM:
     # projection onto feasible set C using PDM algorithm.
@@ -63,8 +63,8 @@ class PDM:
 
     def project(self, sample):
         sample = self._enforce_legal_edges(sample)
-        if self.planar:
-            sample = self._enforce_planarity(sample)
+        # if self.planar:
+        #     sample = self._enforce_planarity(sample)
         if self.connected:
             sample = self._enforce_connectivity(sample)
         if self.max_weight:
@@ -193,7 +193,144 @@ class PDM:
         return self._remove_edges(sample, edges_to_remove)
     
     def _enforce_connectivity(self, sample):
-        # todo
+        edges_by_graph = self._get_edges_by_graph(sample)
+        grid_width, grid_height = self.grid_shape
+        max_weight = sample.edge_attr.size(1)
+        device = sample.edge_index.device
+    
+        def get_neighbors(pos, existing_edges):
+            r, c = pos
+            directions = [
+                (0,1), (0,-1), (1,0), (-1,0), (1,1), (1,-1), (-1,1), (-1,-1), # 8-neighborhood
+                (1,2), (1,-2), (-1,2), (-1,-2), (2,1), (2,-1), (-2,1), (-2,-1) # knight moves
+            ]
+            
+            # iterate over all possible directions and yield valid neighbors
+            for dr, dc in directions:
+                nr, nc = r + dr, c + dc
+                if not (0 <= nr < grid_height and 0 <= nc < grid_width):
+                    continue
+
+                # ensure that adding edge to neighbor does not create an edge crossing
+                if self.planar:
+                    direction = (dr, dc)
+                    potential_crossers = self.lookup_table.get(direction, [])
+                    
+                    is_crossing = False
+                    for ((s_x, s_y), (e_x, e_y)) in potential_crossers:
+                        # check if specific edge that would cross this move exists
+                        cross_start = (r + s_x, c + s_y)
+                        cross_end = (r + e_x, c + e_y)
+                        cross_edge = tuple(sorted((cross_start, cross_end)))
+                        if cross_edge in existing_edges:
+                            is_crossing = True
+                            break
+                    
+                    # skip neighbor if it would create a crossing
+                    if is_crossing:
+                        continue
+
+                yield (nr, nc)
+
+        for graph_idx in range(len(edges_by_graph)):
+            edges = edges_by_graph[graph_idx]
+            edges_to_add = set()
+            existing_edges = set()
+            
+            # each edge consists of two indices/references to the global edge list
+            G = nx.Graph()
+            for edge in edges:
+                start, end = edge
+                G.add_edge(start, end)
+                existing_edges.add(tuple(sorted((start, end))))
+                
+            components = list(nx.connected_components(G))
+            if len(components) <= 1:
+                continue  # already connected
+
+            # fast lookup for which node belongs to which component, maps (x,y) -> component_index
+            node_to_comp_id = {}
+            for i, nodes in enumerate(components):
+                for node in nodes:
+                    node_to_comp_id[node] = i
+
+            # BFS with multiple sources (all component nodes)
+            queue = deque()
+            visited = {} # (x,y) -> (source_component_id, origin_node_in_comp)
+            predecessors = {} # (x,y) -> parent_node (x_parent, y_parent), needed for backtracking paths
+            connected_components = set() # track which components are already connected
+
+            for component, nodes in enumerate(components):
+                for node in nodes:
+                    queue.append(node)
+                    visited[node] = component
+                    predecessors[node] = None # mark as root
+
+            while queue:
+                node = queue.popleft()
+                component = visited[node]
+
+                for neighbor in get_neighbors(node, existing_edges):
+                    if neighbor in visited:
+                        neighbor_component = visited[neighbor]
+                        
+                        # path found if new neighbor belongs to different component
+                        if component != neighbor_component:
+                            already_connected = component in connected_components and neighbor_component in connected_components
+                            # skip if these components are already connected
+                            if not already_connected:
+                                connected_components.add(component)
+                                connected_components.add(neighbor_component)
+                                
+                                # connect node and neighbor
+                                bridge_edge = tuple(sorted((node, neighbor)))
+                                edges_to_add.add(bridge_edge)
+                                existing_edges.add(bridge_edge)
+                                
+                                # backtrack from node to its component root
+                                current = node
+                                while predecessors[current] is not None:
+                                    parent = predecessors[current]
+                                    path_edge = tuple(sorted((current, parent)))
+                                    edges_to_add.add(path_edge)
+                                    existing_edges.add(path_edge)
+                                    current = parent
+                                
+                                # backtrack from neighbor to its component root
+                                current = neighbor
+                                while predecessors[current] is not None:
+                                    parent = predecessors[current]
+                                    path_edge = tuple(sorted((current, parent)))
+                                    edges_to_add.add(path_edge)
+                                    existing_edges.add(path_edge)
+                                    current = parent
+
+                    else:
+                        # add node from empty space to current component
+                        visited[neighbor] = component
+                        predecessors[neighbor] = node 
+                        queue.append(neighbor)
+
+            # add new edges to sample
+            for (start, end) in edges_to_add:
+                start_coordinate = start[1] * grid_width + start[0]
+                end_coordinate = end[1] * grid_width + end[0]
+                
+                # get node indices that correspond to coordinates
+                same_start_node = start_coordinate == sample.node.argmax(dim=1)
+                same_end_node = end_coordinate == sample.node.argmax(dim=1)
+                same_graph = sample.batch == graph_idx
+                start_idx = torch.nonzero((same_graph & same_start_node)).item()
+                end_idx = torch.nonzero((same_graph & same_end_node)).item()
+
+                # add edge to edge_index and edge_attr
+                edge = torch.tensor([[start_idx], [end_idx]], device=device)
+                reverse_edge = torch.tensor([[end_idx], [start_idx]], device=device)
+                edge_attr = torch.zeros((1, max_weight), device=device)
+                random_weight = torch.randint(1, max_weight, (1,), device=device)
+                edge_attr[0, random_weight] = 1  
+                sample.edge_index = torch.cat([sample.edge_index, edge, reverse_edge], dim=1)
+                sample.edge_attr = torch.cat([sample.edge_attr, edge_attr, edge_attr], dim=0)
         return sample
     
     def _enforce_max_weight(self, sample):
